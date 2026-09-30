@@ -12,15 +12,18 @@ st.set_page_config(
     layout="wide"
 )
 
+# Senha fixa para o ambiente de Administração
+ADMIN_PASSWORD_FIXA = "26210837"
+
 # Estilo CSS customizado
 st.markdown('''
 <style>
-    /* Estilo limpo para o status atual sem fundo colorido (Imagem 3) */
+    /* Estilo limpo para o status atual sem fundo colorido */
     .status-texto {
         font-weight: bold;
         color: #333333;
     }
-    /* Estilo para tabela no resumo sem quebra de texto (Imagem 1) */
+    /* Estilo para tabela no resumo sem quebra de texto */
     .stDataFrame {
         white-space: nowrap;
     }
@@ -79,14 +82,26 @@ init_db()
 st.title("🧢 R² BONÉS - Controle de Pedidos")
 
 # -------------------------------------------------------------
-# CONTROLE DE ACESSO / PERFIL
+# CONTROLE DE ACESSO / PERFIL COM SENHA FIXA
 # -------------------------------------------------------------
 st.sidebar.header("👤 Perfil de Acesso")
-perfil = st.sidebar.selectbox("Acessar como:", ["Ateliê", "Administrador (Renan/Ronald)"])
 
-is_admin = perfil == "Administrador (Renan/Ronald)"
+perfil = st.sidebar.selectbox(
+    "Acessar como:", 
+    ["Ateliê (Livre)", "Administrador (Restrito)"]
+)
 
-# Definição do menu conforme o perfil
+is_admin = False
+
+if perfil == "Administrador (Restrito)":
+    senha_digitada = st.sidebar.text_input("Digite a Senha de ADM:", type="password", key="senha_input_adm")
+    if senha_digitada == ADMIN_PASSWORD_FIXA:
+        is_admin = True
+        st.sidebar.success("🔒 Acesso ADM Liberado")
+    elif senha_digitada != "":
+        st.sidebar.error("❌ Senha incorreta!")
+
+# Definição do menu conforme permissão de acesso
 if is_admin:
     menu_options = ["➕ Encomenda", "📋 Produção", "📊 Tabela Geral"]
 else:
@@ -110,7 +125,6 @@ if menu == "➕ Encomenda":
 
     col_l1, col_l2 = st.columns(2)
     with col_l1:
-        # Textos atualizados conforme solicitações
         opcao_lote = st.radio("Pedido:", ["Consulta Pedido", "Novo Pedido"], horizontal=True)
         
         if opcao_lote == "Consulta Pedido" and lotes_existentes:
@@ -128,22 +142,17 @@ if menu == "➕ Encomenda":
     with st.form("form_item_lote", clear_on_submit=True):
         col1, col2 = st.columns(2)
         
-        # COLUNA DA ESQUERDA (Imagem 6)
         with col1:
             cor_bone = st.text_input("Cor do Boné", placeholder="Ex: Off White, Caramelo, Rosa Claro, Cinza")
             frase_arte = st.text_area("Arte Estampada", placeholder="Ex: Cariocando (com onda centralizada embaixo)")
             cor_linha = st.text_input("Cor da Estampa", placeholder="Ex: Azul, Preto, Off White, Bordô")
-            # Imagem/Foto movida para a coluna da esquerda abaixo da Cor da Estampa
             uploaded_file = st.file_uploader("Foto / Imagem de Referência da Estampa (Opcional)", type=["jpg", "jpeg", "png", "webp"])
 
-        # COLUNA DA DIREITA (Imagem 6)
         with col2:
             tipo = st.selectbox("Produto", ["Simples", "Premium", "Kids", "Outro"])
-            # Preço sem botões - + (input livre editável)
             preco_str = st.text_input("Preço Unitário (R$)", value="29,00")
             observacoes = st.text_input("Observações Específicas", placeholder="Ex: Bordado frontal 12cm, fonte manuscrita")
             
-            # Botão Adicionar posicionado do lado direito
             st.markdown("<br>", unsafe_allow_html=True)
             submit = st.form_submit_button("➕ Adicionar Boné à Encomenda", use_container_width=True)
 
@@ -176,7 +185,7 @@ if menu == "➕ Encomenda":
                 conn.close()
                 st.success(f"✅ Boné '{frase_arte}' adicionado com sucesso ao pedido '{nome_lote}'!")
 
-    # Resumo da produção em tabela formatada (Imagem 1)
+    # Resumo da produção em tabela formatada
     st.markdown("---")
     st.subheader(f"📦 Resumo da Produção Pedido '{nome_lote}'")
     conn = sqlite3.connect(DB_NAME)
@@ -215,7 +224,7 @@ if menu == "➕ Encomenda":
         st.caption("Nenhum boné cadastrado neste pedido ainda.")
 
 # -------------------------------------------------------------
-# 2. TELA DE PRODUÇÃO (Imagem 5)
+# 2. TELA DE PRODUÇÃO
 # -------------------------------------------------------------
 elif menu == "📋 Produção":
     st.header("📋 Produção")
@@ -254,7 +263,6 @@ elif menu == "📋 Produção":
                     if row["lote_id"]:
                         st.markdown(f"📦 **Pedido:** `{row['lote_id']}`")
                     
-                    # Estilo idêntico com caixa de código para Arte e Cor da Estampa (Imagem 4)
                     arte_fmt = f"`{row['frase_arte']}`" if row['frase_arte'] else "-"
                     cor_linha_fmt = f"`{row['cor_linha']}`" if row['cor_linha'] else "-"
                     
@@ -264,11 +272,9 @@ elif menu == "📋 Produção":
                     if row["observacoes"]:
                         st.info(f"📌 **Obs:** {row['observacoes']}")
                 with col_status:
-                    # Data sem a hora (Imagem 4)
                     data_so_data = row['data_criacao'].split(" ")[0] if row['data_criacao'] else ""
                     st.write(f"**Data:** {data_so_data}")
                     
-                    # Sem preenchimento de fundo colorido no texto do status (Imagem 3)
                     st.markdown(f"**Status Atual:** **{row['status']}**")
                     
                     novo_status = st.selectbox(
@@ -287,7 +293,7 @@ elif menu == "📋 Produção":
 
                     if is_admin:
                         st.markdown("<br>", unsafe_allow_html=True)
-                        if st.button("🗑️️ Excluir Item", key=f"btn_del_card_{row['id']}", type="secondary"):
+                        if st.button("🗑 Excluir Item", key=f"btn_del_card_{row['id']}", type="secondary"):
                             deletar_item(row['id'])
                             st.success("Item excluído!")
                             st.rerun()
