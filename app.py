@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import os
+import io
 from PIL import Image
 from datetime import datetime
 
@@ -18,14 +19,17 @@ ADMIN_PASSWORD_FIXA = "26210837"
 # Estilo CSS customizado
 st.markdown('''
 <style>
-    /* Estilo limpo para o status atual sem fundo colorido */
     .status-texto {
         font-weight: bold;
         color: #333333;
     }
-    /* Estilo para tabela no resumo sem quebra de texto */
     .stDataFrame {
         white-space: nowrap;
+    }
+    /* Ajuste para evitar quebra de linha nos cards st.metric */
+    [data-testid="stMetricValue"] {
+        font-size: 1.5rem !important;
+        white-space: nowrap !important;
     }
 </style>
 ''', unsafe_allow_html=True)
@@ -56,7 +60,17 @@ def init_db():
         )
     ''')
     
-    # Migração para atualizar antigos 'Pendente' para 'Em Produção'
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pagamentos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lote_id TEXT,
+            data_pagamento TEXT,
+            valor_pago REAL,
+            forma_pagamento TEXT,
+            observacoes TEXT
+        )
+    ''')
+    
     c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
         
     conn.commit()
@@ -75,6 +89,41 @@ def deletar_item(item_id):
     c.execute("DELETE FROM pedidos WHERE id = ?", (item_id,))
     conn.commit()
     conn.close()
+
+def deletar_pagamento(pagamento_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM pagamentos WHERE id = ?", (pagamento_id,))
+    conn.commit()
+    conn.close()
+
+def gerar_excel_expandido(df):
+    """Gera o arquivo Excel utilizando openpyxl com tratamento de erro e fallback para CSV."""
+    try:
+        import openpyxl
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Pedidos')
+            worksheet = writer.sheets['Pedidos']
+            
+            for col in worksheet.columns:
+                max_len = 0
+                col_letter = col[0].column_letter
+                for cell in col:
+                    val_str = str(cell.value or '')
+                    if len(val_str) > max_len:
+                        max_len = len(val_str)
+                    cell.alignment = cell.alignment.copy(wrap_text=False)
+                worksheet.column_dimensions[col_letter].width = max(max_len + 5, 12)
+                
+        output.seek(0)
+        return output, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+    except ImportError:
+        output = io.BytesIO()
+        csv_bytes = df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+        output.write(csv_bytes)
+        output.seek(0)
+        return output, "text/csv", "csv"
 
 init_db()
 
@@ -101,11 +150,10 @@ if perfil == "Administrador (Restrito)":
     elif senha_digitada != "":
         st.sidebar.error("❌ Senha incorreta!")
 
-# Definição do menu conforme permissão de acesso
 if is_admin:
-    menu_options = ["➕ Encomenda", "📋 Produção", "📊 Tabela Geral"]
+    menu_options = ["➕ Encomenda", "📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
 else:
-    menu_options = ["📋 Produção", "📊 Tabela Geral"]
+    menu_options = ["📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
 
 menu = st.sidebar.radio("Navegação", menu_options)
 
@@ -116,7 +164,6 @@ if menu == "➕ Encomenda":
     st.header("Cadastrar Item na Encomenda")
     st.write("Selecione um lote/pedido existente ou crie um novo para vincular os bonés.")
 
-    # Buscar lotes já existentes no banco
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("SELECT DISTINCT lote_id FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' ORDER BY id DESC")
@@ -185,7 +232,6 @@ if menu == "➕ Encomenda":
                 conn.close()
                 st.success(f"✅ Boné '{frase_arte}' adicionado com sucesso ao pedido '{nome_lote}'!")
 
-    # Resumo da produção em tabela formatada
     st.markdown("---")
     st.subheader(f"📦 Resumo da Produção Pedido '{nome_lote}'")
     conn = sqlite3.connect(DB_NAME)
@@ -299,7 +345,7 @@ elif menu == "📋 Produção":
                             st.rerun()
 
 # -------------------------------------------------------------
-# 3. TABELA GERAL
+# 3. TABELA GERAL (EXPORTAÇÃO POR PEDIDO)
 # -------------------------------------------------------------
 elif menu == "📊 Tabela Geral":
     st.header("📊 Tabela Geral de Pedidos")
@@ -348,3 +394,147 @@ elif menu == "📊 Tabela Geral":
                             st.rerun()
                 else:
                     st.dataframe(df_exibicao_lote, use_container_width=True, hide_index=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                # Botão de Exportar Excel/CSV Individual por Pedido
+                excel_lote_bytes, mime_lote, ext_lote = gerar_excel_expandido(df_exibicao_lote)
+                
+                lote_filename = str(lote).replace('/', '-').replace(' ', '_')
+                st.download_button(
+                    label=f"📥 Exportar Pedido '{lote}' em Excel",
+                    data=excel_lote_bytes,
+                    file_name=f"Pedido_{lote_filename}.{ext_lote}",
+                    mime=mime_lote,
+                    key=f"btn_exp_lote_{lote}"
+                )
+
+# -------------------------------------------------------------
+# 4. TELA FINANCEIRO
+# -------------------------------------------------------------
+elif menu == "💰 Financeiro":
+    st.header("💰 Controle Financeiro de Pedidos")
+    st.write("Acompanhamento de pagamentos por pedido (adiantamentos de 50% e quitações).")
+
+    conn = sqlite3.connect(DB_NAME)
+    df_pedidos = pd.read_sql_query("SELECT lote_id, SUM(preco) as total_pedido FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' GROUP BY lote_id ORDER BY min(id) DESC", conn)
+    df_todos_itens = pd.read_sql_query("SELECT lote_id, tipo, preco FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != ''", conn)
+    df_pagamentos = pd.read_sql_query("SELECT * FROM pagamentos ORDER BY id DESC", conn)
+    conn.close()
+
+    if df_pedidos.empty:
+        st.info("Nenhum pedido cadastrado para exibir no controle financeiro.")
+    else:
+        lotes_list = list(df_pedidos["lote_id"].unique())
+
+        if is_admin:
+            with st.expander("➕ **Registrar Novo Pagamento (Exclusivo ADM)**", expanded=True):
+                with st.form("form_pagamento", clear_on_submit=True):
+                    col_p1, col_p2, col_p3 = st.columns(3)
+                    with col_p1:
+                        lote_pag = st.selectbox("Selecione o Pedido:", lotes_list)
+                        row_pedido = df_pedidos[df_pedidos["lote_id"] == lote_pag]
+                        val_total = row_pedido["total_pedido"].values[0] if not row_pedido.empty else 0.0
+                        st.caption(f"Valor Total do Pedido: **R$ {val_total:.2f}**")
+                    
+                    with col_p2:
+                        val_sugerido = val_total * 0.5
+                        valor_pago_str = st.text_input("Valor Pago (R$)", value=f"{val_sugerido:.2f}".replace(".", ","), help="Sugerido 50% de entrada")
+                        forma_pag = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Transferência", "Outro"])
+
+                    with col_p3:
+                        data_pag = st.date_input("Data do Pagamento", value=datetime.now())
+                        obs_pag = st.text_input("Observação", placeholder="Ex: Entrada 50%, Sinal, Quitação final")
+
+                    submit_pag = st.form_submit_button("💳 Registrar Pagamento", use_container_width=True)
+
+                    if submit_pag:
+                        try:
+                            val_pago_num = float(valor_pago_str.replace(",", ".").replace("R$", "").strip())
+                        except ValueError:
+                            val_pago_num = 0.0
+
+                        if val_pago_num <= 0:
+                            st.error("Insira um valor pago válido.")
+                        else:
+                            data_pag_str = data_pag.strftime("%d/%m/%Y")
+                            conn = sqlite3.connect(DB_NAME)
+                            c = conn.cursor()
+                            c.execute('''
+                                INSERT INTO pagamentos (lote_id, data_pagamento, valor_pago, forma_pagamento, observacoes)
+                                VALUES (?, ?, ?, ?, ?)
+                            ''', (lote_pag, data_pag_str, val_pago_num, forma_pag, obs_pag))
+                            conn.commit()
+                            conn.close()
+                            st.success(f"✅ Pagamento de R$ {val_pago_num:.2f} registrado para o pedido '{lote_pag}'!")
+                            st.rerun()
+
+        st.markdown("---")
+        st.subheader("📊 Resumo Financeiro por Pedido")
+
+        for _, row in df_pedidos.iterrows():
+            lote = row["lote_id"]
+            total_pedido = row["total_pedido"]
+
+            df_pag_lote = df_pagamentos[df_pagamentos["lote_id"] == lote] if not df_pagamentos.empty else pd.DataFrame()
+            total_pago = df_pag_lote["valor_pago"].sum() if not df_pag_lote.empty else 0.0
+            saldo_devedor = total_pedido - total_pago
+
+            if total_pago >= total_pedido and total_pedido > 0:
+                status_pag = "🟢 Pago (100%)"
+            elif total_pago > 0:
+                pct = (total_pago / total_pedido) * 100 if total_pedido > 0 else 0
+                status_pag = f"🟡 Parcial ({pct:.0f}%)"
+            else:
+                status_pag = "🔴 Pendente"
+
+            with st.expander(f"📦 Pedido: {lote} | Status: {status_pag}", expanded=False):
+                c_m1, c_m2, c_m3, c_m4 = st.columns(4)
+                c_m1.metric("Total do Pedido", f"R$ {total_pedido:.2f}")
+                c_m2.metric("Total Pago", f"R$ {total_pago:.2f}")
+                c_m3.metric("Saldo Restante", f"R$ {max(saldo_devedor, 0.0):.2f}")
+                c_m4.metric("Status do Pagamento", status_pag)
+
+                st.markdown("##### Histórico de Pagamentos")
+                if not df_pag_lote.empty:
+                    df_exib_pag = df_pag_lote[["data_pagamento", "valor_pago", "forma_pagamento", "observacoes"]].copy()
+                    df_exib_pag["valor_pago"] = df_exib_pag["valor_pago"].apply(lambda x: f"R$ {x:.2f}")
+                    df_exib_pag = df_exib_pag.rename(columns={
+                        "data_pagamento": "Data",
+                        "valor_pago": "Valor Pago",
+                        "forma_pagamento": "Forma de Pagamento",
+                        "observacoes": "Observações"
+                    })
+                    
+                    if is_admin:
+                        c_tbl, c_del_p = st.columns([4, 1])
+                        with c_tbl:
+                            st.dataframe(df_exib_pag, use_container_width=True, hide_index=True)
+                        with c_del_p:
+                            dict_pags = {p_row["id"]: f"R$ {p_row['valor_pago']:.2f} ({p_row['data_pagamento']})" for _, p_row in df_pag_lote.iterrows()}
+                            id_del_p = st.selectbox("Pagamento:", options=list(dict_pags.keys()), format_func=lambda x: dict_pags[x], key=f"sel_pag_{lote}")
+                            if st.button("❌ Remover Pagamento", key=f"btn_del_pag_{lote}"):
+                                deletar_pagamento(id_del_p)
+                                st.success("Pagamento removido!")
+                                st.rerun()
+                    else:
+                        st.dataframe(df_exib_pag, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Nenhum pagamento registrado para este pedido ainda.")
+
+                st.markdown("##### 🧢 Resumo de Bonés por Produto")
+                df_itens_lote = df_todos_itens[df_todos_itens["lote_id"] == lote]
+                
+                if not df_itens_lote.empty:
+                    df_resumo_prod = df_itens_lote.groupby("tipo").agg(
+                        Quantidade=('tipo', 'count'),
+                        Subtotal=('preco', 'sum')
+                    ).reset_index()
+
+                    fator_adiantado = (total_pago / total_pedido) if total_pedido > 0 else 0.0
+
+                    df_resumo_prod["Valor Adiantado"] = df_resumo_prod["Subtotal"].apply(lambda val: f"R$ {(val * fator_adiantado):.2f}")
+                    df_resumo_prod = df_resumo_prod.rename(columns={"tipo": "Produto"})[["Produto", "Quantidade", "Valor Adiantado"]]
+
+                    st.dataframe(df_resumo_prod, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Nenhum item vinculado a este pedido.")
