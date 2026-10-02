@@ -815,10 +815,10 @@ elif menu == "💰 Financeiro":
                 st.markdown("##### Histórico de Pagamentos")
                 if not df_pag_lote.empty:
                     for _, p_row in df_pag_lote.iterrows():
-                        col_p_info, col_p_comp, col_p_act = st.columns([3.2, 1, 0.8])
+                        col_p_info, col_p_comp, col_p_act = st.columns([4.2, 1.2, 0.8])
                         with col_p_info:
-                            obs_texto = f" {p_row['observacoes']}" if p_row['observacoes'] else ""
-                            st.markdown(f"🗓 **Data:** {p_row['data_pagamento']} | 💰 **Valor:** R$ {p_row['valor_pago']:.2f} | 💳 **Forma:** {p_row['forma_pagamento']} | 📌 **Obs:** {obs_texto or 'Sem observação'}")
+                            obs_texto = f" {p_row['observacoes']}" if p_row['observacoes'] else " Sem observação"
+                            st.markdown(f"🗓 **Data:** {p_row['data_pagamento']} | 💰 **Valor:** R$ {p_row['valor_pago']:.2f} | 💳 **Forma:** {p_row['forma_pagamento']} | 📌 **Obs:**{obs_texto}")
                         with col_p_comp:
                             c_path = p_row.get("comprovante_path")
                             if c_path and os.path.exists(str(c_path)):
@@ -854,7 +854,7 @@ elif menu == "💰 Financeiro":
                         counts_prod["Quantidade"] = counts_prod["Quantidade"].astype(str)
                         st.dataframe(counts_prod, use_container_width=True, hide_index=True)
 
-                    # GRUPO 2: EXTRAS (ESTRUTURA DE TABELA UNIFORME E ALINHADA)
+                    # GRUPO 2: EXTRAS (LAYOUT DE TABELA PADRONIZADO COM O GRUPO BONÉS)
                     with col_det2:
                         df_estampas = df_itens_lote[df_itens_lote["valor_estampa_extra"] > 0]
                         df_matrizes = df_itens_lote[df_itens_lote["valor_matriz"] > 0]
@@ -873,7 +873,6 @@ elif menu == "💰 Financeiro":
                             df_extras = pd.DataFrame(extras_lista)
                             st.dataframe(df_extras, use_container_width=True, hide_index=True)
                             
-                            # Botões discretos e alinhados para consulta rápida
                             c_btn_est, c_btn_mat = st.columns(2)
                             with c_btn_est:
                                 if not df_estampas.empty:
