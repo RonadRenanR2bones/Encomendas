@@ -306,7 +306,7 @@ if menu == "➕ Encomenda":
             uploaded_file = st.file_uploader("Foto / Imagem de Referência da Estampa (Opcional)", type=["jpg", "jpeg", "png", "webp"])
 
         with col2:
-            tipo = st.selectbox("Produto", ["Básico", "Premium", "Kids", "Estampa Extra", "Outro"])
+            tipo = st.selectbox("Produto", ["Básico", "Premium", "Kids", "Outro"])
             preco_str = st.text_input("Preço Unitário (R$)", value="29,00")
             estampa_extra_str = st.text_input("Estampa Extra (R$)", value="0,00", help="Valor adicional para estampa extra (opcional)")
             matriz_str = st.text_input("Taxa Matriz de Bordado (R$)", value="0,00", help="Taxa pontual para criação/ajuste técnico de matriz (opcional)")
@@ -431,7 +431,7 @@ if menu == "➕ Encomenda":
                     edit_uploaded_file = st.file_uploader("Substituir Foto / Imagem de Referência (Opcional)", type=["jpg", "jpeg", "png", "webp"], key="file_uploader_edit")
 
                 with col_e2:
-                    prod_options = ["Básico", "Premium", "Kids", "Estampa Extra", "Outro"]
+                    prod_options = ["Básico", "Premium", "Kids", "Outro"]
                     idx_prod = prod_options.index(item_dados["tipo"]) if item_dados["tipo"] in prod_options else 0
                     edit_tipo = st.selectbox("Produto", prod_options, index=idx_prod)
                     
@@ -705,7 +705,7 @@ elif menu == "💰 Financeiro":
 
     conn = sqlite3.connect(DB_NAME)
     df_pedidos = pd.read_sql_query("SELECT lote_id, SUM(preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_pedido FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' GROUP BY lote_id ORDER BY min(id) DESC", conn)
-    df_todos_itens = pd.read_sql_query("SELECT lote_id, tipo, preco FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != ''", conn)
+    df_todos_itens = pd.read_sql_query("SELECT lote_id, tipo, preco, COALESCE(valor_estampa_extra, 0) as valor_estampa_extra, COALESCE(valor_matriz, 0) as valor_matriz FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != ''", conn)
     df_pagamentos = pd.read_sql_query("SELECT * FROM pagamentos ORDER BY id DESC", conn)
     conn.close()
 
@@ -830,12 +830,23 @@ elif menu == "💰 Financeiro":
                 df_itens_lote = df_todos_itens[df_todos_itens["lote_id"] == lote]
                 
                 if not df_itens_lote.empty:
-                    df_resumo_prod = df_itens_lote.groupby("tipo").agg(
-                        Quantidade=('tipo', 'count')
-                    ).reset_index()
+                    # Contagem dos produtos principais (Básico, Kids, Premium, etc.)
+                    resumo_lista = []
+                    counts_prod = df_itens_lote.groupby("tipo").size()
+                    for prod_nome, qtd in counts_prod.items():
+                        resumo_lista.append({"Produto": prod_nome, "Quantidade": str(qtd)})
 
-                    df_resumo_prod = df_resumo_prod.rename(columns={"tipo": "Produto"})[["Produto", "Quantidade"]]
-                    df_resumo_prod["Quantidade"] = df_resumo_prod["Quantidade"].astype(str)
+                    # Contagem condicional de Estampa Extra
+                    qtd_extra = (df_itens_lote["valor_estampa_extra"] > 0).sum()
+                    if qtd_extra > 0:
+                        resumo_lista.append({"Produto": "Estampa Extra", "Quantidade": str(qtd_extra)})
+
+                    # Contagem condicional de Matriz de Bordado
+                    qtd_matriz = (df_itens_lote["valor_matriz"] > 0).sum()
+                    if qtd_matriz > 0:
+                        resumo_lista.append({"Produto": "Matriz de Bordado", "Quantidade": str(qtd_matriz)})
+
+                    df_resumo_prod = pd.DataFrame(resumo_lista)
                     
                     st.dataframe(df_resumo_prod, use_container_width=True, hide_index=True)
                     
