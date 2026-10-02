@@ -16,7 +16,7 @@ st.set_page_config(
 # Senha fixa para o ambiente de Administração
 ADMIN_PASSWORD_FIXA = "26210837"
 
-# Estilo CSS customizado
+# Estilo CSS customizado (incluindo alinhamento à esquerda para tabelas no resumo financeiro)
 st.markdown('''
 <style>
     .status-texto {
@@ -30,6 +30,10 @@ st.markdown('''
     [data-testid="stMetricValue"] {
         font-size: 1.5rem !important;
         white-space: nowrap !important;
+    }
+    /* Força o alinhamento de texto de células de tabelas para a esquerda */
+    [data-testid="stDataFrame"] td {
+        text-align: left !important;
     }
 </style>
 ''', unsafe_allow_html=True)
@@ -448,14 +452,19 @@ elif menu == "📋 Produção":
         st.info("Nenhum pedido cadastrado até o momento.")
     else:
         col_f1, col_f2 = st.columns(2)
+        
+        # Obter lotes únicos ordenados do mais recente para o mais antigo
+        lotes_ordenados = list(df["lote_id"].dropna().unique())
+        lotes_disponiveis = ["Todos"] + lotes_ordenados
+        
+        # Padrão: Pré-selecionar o ÚLTIMO PEDIDO CRIADO (lotes_ordenados[0]) em vez de "Todos"
+        lote_padrao = lotes_ordenados[0] if lotes_ordenados else "Todos"
+
+        if "selected_lote_prod" not in st.session_state:
+            st.session_state["selected_lote_prod"] = lote_padrao
+
+        # COLUNA 1: FILTRAR POR LOTE / ENCOMENDA
         with col_f1:
-            status_filter = st.multiselect("Filtrar por Status", options=["Em Produção", "Concluído"], default=["Em Produção"])
-        with col_f2:
-            lotes_disponiveis = ["Todos"] + list(df["lote_id"].dropna().unique())
-            
-            if "selected_lote_prod" not in st.session_state:
-                st.session_state["selected_lote_prod"] = "Todos"
-                
             c_prod_sel, c_prod_btn = st.columns([3, 1])
             with c_prod_sel:
                 lote_filter = st.selectbox(
@@ -468,6 +477,10 @@ elif menu == "📋 Produção":
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("🔍", key="btn_lupa_producao", help="Abrir busca suspensa por nome"):
                     modal_buscar_pedido("prod", lotes_disponiveis)
+
+        # COLUNA 2: FILTRAR POR STATUS
+        with col_f2:
+            status_filter = st.multiselect("Filtrar por Status", options=["Em Produção", "Concluído"], default=["Em Produção"])
 
         if status_filter:
             df = df[df["status"].isin(status_filter)]
@@ -495,7 +508,7 @@ elif menu == "📋 Produção":
                     st.markdown(f"**Cor da Estampa:** {cor_linha_fmt}")
                     st.markdown(f"**Produto:** `{row['tipo']}`")
                     
-                    # FOTO DE REFERÊNCIA EM BOTÃO POP-UP (IMAGEM 1)
+                    # FOTO DE REFERÊNCIA EM BOTÃO POP-UP
                     if row["imagem_path"] and os.path.exists(row["imagem_path"]):
                         c_ref_lbl, c_ref_btn = st.columns([1, 2])
                         with c_ref_lbl:
@@ -739,6 +752,10 @@ elif menu == "💰 Financeiro":
                     ).reset_index()
 
                     df_resumo_prod = df_resumo_prod.rename(columns={"tipo": "Produto"})[["Produto", "Quantidade"]]
+                    
+                    # Converte a coluna Quantidade para string simples para garantir que a formatação numérica não centralize ou alinhe à direita por padrão
+                    df_resumo_prod["Quantidade"] = df_resumo_prod["Quantidade"].astype(str)
+                    
                     st.dataframe(df_resumo_prod, use_container_width=True, hide_index=True)
                     
                     st.markdown(f"💰 **Valor Total Adiantado:** `R$ {total_pago:.2f}`")
