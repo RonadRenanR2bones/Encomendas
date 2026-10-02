@@ -815,9 +815,10 @@ elif menu == "💰 Financeiro":
                 st.markdown("##### Histórico de Pagamentos")
                 if not df_pag_lote.empty:
                     for _, p_row in df_pag_lote.iterrows():
-                        col_p_info, col_p_comp, col_p_act = st.columns([3, 1, 1])
+                        col_p_info, col_p_comp, col_p_act = st.columns([3.2, 1, 0.8])
                         with col_p_info:
-                            st.write(f"🗓 **Data:** {p_row['data_pagamento']} | 💰 **Valor:** R$ {p_row['valor_pago']:.2f} | 💳 **Forma:** {p_row['forma_pagamento']} | 📌 **Obs:** {p_row['observacoes'] or '-'}")
+                            obs_texto = f" {p_row['observacoes']}" if p_row['observacoes'] else ""
+                            st.markdown(f"🗓 **Data:** {p_row['data_pagamento']} | 💰 **Valor:** R$ {p_row['valor_pago']:.2f} | 💳 **Forma:** {p_row['forma_pagamento']} | 📌 **Obs:** {obs_texto or 'Sem observação'}")
                         with col_p_comp:
                             c_path = p_row.get("comprovante_path")
                             if c_path and os.path.exists(str(c_path)):
@@ -853,7 +854,7 @@ elif menu == "💰 Financeiro":
                         counts_prod["Quantidade"] = counts_prod["Quantidade"].astype(str)
                         st.dataframe(counts_prod, use_container_width=True, hide_index=True)
 
-                    # GRUPO 2: EXTRAS (LUPA DENTRO DA CÉLULA / COLUNA QUANTIDADE)
+                    # GRUPO 2: EXTRAS (ESTRUTURA DE TABELA UNIFORME E ALINHADA)
                     with col_det2:
                         df_estampas = df_itens_lote[df_itens_lote["valor_estampa_extra"] > 0]
                         df_matrizes = df_itens_lote[df_itens_lote["valor_matriz"] > 0]
@@ -863,32 +864,24 @@ elif menu == "💰 Financeiro":
                         if has_extras:
                             st.markdown("**Extras**")
                             
-                            c_prod, c_qtd, c_btn = st.columns([2.5, 1.2, 0.8])
-                            with c_prod:
-                                st.markdown("**Produto**")
-                            with c_qtd:
-                                st.markdown("**Quantidade**")
-                            with c_btn:
-                                st.markdown("&nbsp;", unsafe_allow_html=True)
-                            
+                            extras_lista = []
                             if not df_estampas.empty:
-                                c_prod, c_qtd, c_btn = st.columns([2.5, 1.2, 0.8])
-                                with c_prod:
-                                    st.write("Estampa")
-                                with c_qtd:
-                                    st.write(str(len(df_estampas)))
-                                with c_btn:
-                                    if st.button("🔍", key=f"btn_pop_est_{lote}", help="Ver detalhes da Estampa"):
-                                        modal_detalhes_extra("Detalhamento de Estampa Extra", df_estampas, "valor_estampa_extra")
-                            
+                                extras_lista.append({"Produto": "Estampa", "Quantidade": str(len(df_estampas))})
                             if not df_matrizes.empty:
-                                c_prod, c_qtd, c_btn = st.columns([2.5, 1.2, 0.8])
-                                with c_prod:
-                                    st.write("Matriz de Bordado")
-                                with c_qtd:
-                                    st.write(str(len(df_matrizes)))
-                                with c_btn:
-                                    if st.button("🔍", key=f"btn_pop_mat_{lote}", help="Ver detalhes da Matriz de Bordado"):
+                                extras_lista.append({"Produto": "Matriz de Bordado", "Quantidade": str(len(df_matrizes))})
+                            
+                            df_extras = pd.DataFrame(extras_lista)
+                            st.dataframe(df_extras, use_container_width=True, hide_index=True)
+                            
+                            # Botões discretos e alinhados para consulta rápida
+                            c_btn_est, c_btn_mat = st.columns(2)
+                            with c_btn_est:
+                                if not df_estampas.empty:
+                                    if st.button("🔍 Estampa", key=f"btn_pop_est_{lote}", help="Ver itens de Estampa Extra", use_container_width=True):
+                                        modal_detalhes_extra("Detalhamento de Estampa Extra", df_estampas, "valor_estampa_extra")
+                            with c_btn_mat:
+                                if not df_matrizes.empty:
+                                    if st.button("🔍 Matriz Bordado", key=f"btn_pop_mat_{lote}", help="Ver itens de Matriz de Bordado", use_container_width=True):
                                         modal_detalhes_extra("Detalhamento de Matriz de Bordado", df_matrizes, "valor_matriz")
 
                     st.markdown(f"💰 **Valor Total Adiantado:** `R$ {total_pago:.2f}`")
