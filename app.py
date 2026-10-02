@@ -184,6 +184,21 @@ def modal_visualizar_foto(img_path, nome_arte):
     else:
         st.warning("⚠️ Foto de referência não encontrada ou indisponível.")
 
+@st.dialog("🔍 Detalhes dos Itens Extras")
+def modal_detalhes_extra(titulo, df_detalhes, coluna_valor):
+    st.markdown(f"### {titulo}")
+    df_view = df_detalhes[["cor_bone", "frase_arte", "cor_linha", coluna_valor]].copy()
+    df_view[coluna_valor] = df_view[coluna_valor].apply(lambda x: f"R$ {x:.2f}")
+    
+    nome_col_val = "Valor Extra" if coluna_valor == "valor_estampa_extra" else "Valor Matriz"
+    df_view = df_view.rename(columns={
+        "cor_bone": "Cor do Boné",
+        "frase_arte": "Arte",
+        "cor_linha": "Cor da Estampa",
+        coluna_valor: nome_col_val
+    })
+    st.dataframe(df_view, use_container_width=True, hide_index=True)
+
 init_db()
 
 # Título Principal
@@ -838,7 +853,7 @@ elif menu == "💰 Financeiro":
                         counts_prod["Quantidade"] = counts_prod["Quantidade"].astype(str)
                         st.dataframe(counts_prod, use_container_width=True, hide_index=True)
 
-                    # GRUPO 2: EXTRAS (COM BOTÕES SUSPENSOS DE VISUALIZAÇÃO)
+                    # GRUPO 2: EXTRAS (LUPA DENTRO DA CÉLULA / COLUNA QUANTIDADE)
                     with col_det2:
                         df_estampas = df_itens_lote[df_itens_lote["valor_estampa_extra"] > 0]
                         df_matrizes = df_itens_lote[df_itens_lote["valor_matriz"] > 0]
@@ -848,40 +863,33 @@ elif menu == "💰 Financeiro":
                         if has_extras:
                             st.markdown("**Extras**")
                             
-                            # Tabela Resumo dos Extras
-                            extras_lista = []
-                            if not df_estampas.empty:
-                                extras_lista.append({"Produto": "Estampa", "Quantidade": str(len(df_estampas))})
-                            if not df_matrizes.empty:
-                                extras_lista.append({"Produto": "Matriz de Bordado", "Quantidade": str(len(df_matrizes))})
+                            c_prod, c_qtd, c_btn = st.columns([2.5, 1.2, 0.8])
+                            with c_prod:
+                                st.markdown("**Produto**")
+                            with c_qtd:
+                                st.markdown("**Quantidade**")
+                            with c_btn:
+                                st.markdown("&nbsp;", unsafe_allow_html=True)
                             
-                            st.dataframe(pd.DataFrame(extras_lista), use_container_width=True, hide_index=True)
-                            
-                            # Botão Suspenso / Expander para Estampa
                             if not df_estampas.empty:
-                                with st.expander(f"🔍 Ver detalhes da Estampa ({len(df_estampas)} item(ns))"):
-                                    df_est_view = df_estampas[["cor_bone", "frase_arte", "cor_linha", "valor_estampa_extra"]].copy()
-                                    df_est_view["valor_estampa_extra"] = df_est_view["valor_estampa_extra"].apply(lambda x: f"R$ {x:.2f}")
-                                    df_est_view = df_est_view.rename(columns={
-                                        "cor_bone": "Cor do Boné",
-                                        "frase_arte": "Arte",
-                                        "cor_linha": "Cor da Estampa",
-                                        "valor_estampa_extra": "Valor Extra"
-                                    })
-                                    st.dataframe(df_est_view, use_container_width=True, hide_index=True)
-
-                            # Botão Suspenso / Expander para Matriz de Bordado
+                                c_prod, c_qtd, c_btn = st.columns([2.5, 1.2, 0.8])
+                                with c_prod:
+                                    st.write("Estampa")
+                                with c_qtd:
+                                    st.write(str(len(df_estampas)))
+                                with c_btn:
+                                    if st.button("🔍", key=f"btn_pop_est_{lote}", help="Ver detalhes da Estampa"):
+                                        modal_detalhes_extra("Detalhamento de Estampa Extra", df_estampas, "valor_estampa_extra")
+                            
                             if not df_matrizes.empty:
-                                with st.expander(f"🔍 Ver detalhes da Matriz de Bordado ({len(df_matrizes)} item(ns))"):
-                                    df_mat_view = df_matrizes[["cor_bone", "frase_arte", "cor_linha", "valor_matriz"]].copy()
-                                    df_mat_view["valor_matriz"] = df_mat_view["valor_matriz"].apply(lambda x: f"R$ {x:.2f}")
-                                    df_mat_view = df_mat_view.rename(columns={
-                                        "cor_bone": "Cor do Boné",
-                                        "frase_arte": "Arte",
-                                        "cor_linha": "Cor da Estampa",
-                                        "valor_matriz": "Valor Matriz"
-                                    })
-                                    st.dataframe(df_mat_view, use_container_width=True, hide_index=True)
+                                c_prod, c_qtd, c_btn = st.columns([2.5, 1.2, 0.8])
+                                with c_prod:
+                                    st.write("Matriz de Bordado")
+                                with c_qtd:
+                                    st.write(str(len(df_matrizes)))
+                                with c_btn:
+                                    if st.button("🔍", key=f"btn_pop_mat_{lote}", help="Ver detalhes da Matriz de Bordado"):
+                                        modal_detalhes_extra("Detalhamento de Matriz de Bordado", df_matrizes, "valor_matriz")
 
                     st.markdown(f"💰 **Valor Total Adiantado:** `R$ {total_pago:.2f}`")
                 else:
