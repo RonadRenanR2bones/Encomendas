@@ -5,6 +5,7 @@ import os
 import io
 from PIL import Image
 from datetime import datetime
+import plotly.express as px
 
 # Configuração da Página
 st.set_page_config(
@@ -80,7 +81,6 @@ def init_db():
         )
     ''')
     
-    # Garantir que a coluna comprovante_path exista caso o banco já tenha sido criado antes
     c.execute("PRAGMA table_info(pagamentos)")
     colunas = [column[1] for column in c.fetchall()]
     if "comprovante_path" not in colunas:
@@ -120,7 +120,6 @@ def deletar_pagamento(pagamento_id):
     conn.close()
 
 def gerar_excel_expandido(df):
-    """Gera o arquivo Excel utilizando openpyxl com tratamento de erro e fallback para CSV."""
     try:
         import openpyxl
         output = io.BytesIO()
@@ -148,7 +147,7 @@ def gerar_excel_expandido(df):
         return output, "text/csv", "csv"
 
 # -------------------------------------------------------------
-# MODAL SUSPENSO COM LUPA PARA CONSULTA POR NOME/TERMO
+# MODAIS SUSPENSOS
 # -------------------------------------------------------------
 @st.dialog("🔍 Buscar e Selecionar Pedido")
 def modal_buscar_pedido(key_prefix, lista_lotes):
@@ -165,9 +164,6 @@ def modal_buscar_pedido(key_prefix, lista_lotes):
     else:
         st.warning("Nenhum pedido encontrado com este termo.")
 
-# -------------------------------------------------------------
-# MODAL SUSPENSO PARA VISUALIZAR FOTO DE REFERÊNCIA
-# -------------------------------------------------------------
 @st.dialog("📸 Foto de Referência da Estampa")
 def modal_visualizar_foto(img_path, nome_arte):
     if img_path and os.path.exists(img_path):
@@ -209,9 +205,9 @@ if perfil == "R2 Bonés":
 else:
     st.session_state["admin_autenticado"] = False
 
-# NAVEGAÇÃO (Sem o rótulo/texto "Navegação" visível)
+# NAVEGAÇÃO (Incluindo o novo "📈 Dashboard ADM" apenas para ADM)
 if is_admin:
-    menu_options = ["➕ Encomenda", "📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
+    menu_options = ["➕ Encomenda", "📋 Produção", "📊 Tabela Geral", "💰 Financeiro", "📈 Dashboard ADM"]
 else:
     menu_options = ["📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
 
@@ -224,7 +220,6 @@ if is_admin:
     st.sidebar.markdown("---")
     st.sidebar.subheader("💾 Gestão do Banco de Dados")
 
-    # Upload para restaurar um banco .db
     uploaded_db = st.sidebar.file_uploader("📥 Importar / Restaurar Banco (.db)", type=["db", "sqlite", "sqlite3"], key="uploader_db_sidebar")
 
     if uploaded_db is not None:
@@ -233,7 +228,6 @@ if is_admin:
         st.sidebar.success("✅ Banco atualizado com sucesso!")
         st.rerun()
 
-    # Download do Backup do banco de dados atual
     if os.path.exists(DB_NAME):
         with open(DB_NAME, "rb") as f_db:
             st.sidebar.download_button(
@@ -244,7 +238,6 @@ if is_admin:
                 use_container_width=True
             )
 
-# Lista global de etapas de status
 STATUS_OPCOES = ["Em Produção", "Concluído", "Entregue / Retirado"]
 
 # -------------------------------------------------------------
@@ -455,17 +448,13 @@ elif menu == "📋 Produção":
     else:
         col_f1, col_f2 = st.columns(2)
         
-        # Obter lotes únicos ordenados do mais recente para o mais antigo
         lotes_ordenados = list(df["lote_id"].dropna().unique())
         lotes_disponiveis = ["Todos"] + lotes_ordenados
-        
-        # Padrão: Pré-selecionar o ÚLTIMO PEDIDO CRIADO (lotes_ordenados[0]) em vez de "Todos"
         lote_padrao = lotes_ordenados[0] if lotes_ordenados else "Todos"
 
         if "selected_lote_prod" not in st.session_state:
             st.session_state["selected_lote_prod"] = lote_padrao
 
-        # COLUNA 1: FILTRAR POR LOTE / ENCOMENDA
         with col_f1:
             c_prod_sel, c_prod_btn = st.columns([3, 1])
             with c_prod_sel:
@@ -480,7 +469,6 @@ elif menu == "📋 Produção":
                 if st.button("🔍", key="btn_lupa_producao", help="Abrir busca suspensa por nome"):
                     modal_buscar_pedido("prod", lotes_disponiveis)
 
-        # COLUNA 2: FILTRAR POR STATUS (INCLUINDO "Entregue / Retirado")
         with col_f2:
             status_filter = st.multiselect(
                 "Filtrar por Status", 
@@ -514,7 +502,6 @@ elif menu == "📋 Produção":
                     st.markdown(f"**Cor da Estampa:** {cor_linha_fmt}")
                     st.markdown(f"**Produto:** `{row['tipo']}`")
                     
-                    # FOTO DE REFERÊNCIA EM BOTÃO POP-UP COM ÍCONE DE CÂMERA E ALINHAMENTO PRÓXIMO
                     if row["imagem_path"] and os.path.exists(row["imagem_path"]):
                         c_ref_lbl, c_ref_btn = st.columns([1.1, 1])
                         with c_ref_lbl:
@@ -759,8 +746,6 @@ elif menu == "💰 Financeiro":
                     ).reset_index()
 
                     df_resumo_prod = df_resumo_prod.rename(columns={"tipo": "Produto"})[["Produto", "Quantidade"]]
-                    
-                    # Converte a coluna Quantidade para string simples para manter alinhamento à esquerda
                     df_resumo_prod["Quantidade"] = df_resumo_prod["Quantidade"].astype(str)
                     
                     st.dataframe(df_resumo_prod, use_container_width=True, hide_index=True)
@@ -768,3 +753,148 @@ elif menu == "💰 Financeiro":
                     st.markdown(f"💰 **Valor Total Adiantado:** `R$ {total_pago:.2f}`")
                 else:
                     st.caption("Nenhum item vinculado a este pedido.")
+
+# -------------------------------------------------------------
+# 5. TELA DASHBOARD INTERATIVO (EXCLUSIVO PARA ADMINISTRADORES)
+# -------------------------------------------------------------
+elif menu == "📈 Dashboard ADM":
+    st.header("📈 Dashboard Analítico da Produção (Exclusivo ADM)")
+    st.write("Acompanhe o desempenho, volume de produção por cor, produto e status em tempo real.")
+
+    conn = sqlite3.connect(DB_NAME)
+    df_dash = pd.read_sql_query("SELECT * FROM pedidos ORDER BY id DESC", conn)
+    conn.close()
+
+    if df_dash.empty:
+        st.info("Nenhum pedido cadastrado no banco de dados para gerar indicadores.")
+    else:
+        # Tratamento de datas para filtro
+        df_dash["data_dt"] = pd.to_datetime(df_dash["data_criacao"], format="%d/%m/%Y", errors="coerce")
+        
+        st.markdown("### 🎯 Seleção do Escopo do Dashboard")
+        col_dash_f1, col_dash_f2 = st.columns(2)
+        
+        with col_dash_f1:
+            modo_filtro = st.radio("Filtrar Visão por:", ["Por Pedido Específico", "Por Período / Data"], horizontal=True)
+
+        lotes_dash = ["Todos os Pedidos"] + list(df_dash["lote_id"].dropna().unique())
+
+        if modo_filtro == "Por Pedido Específico":
+            with col_dash_f2:
+                ped_sel = st.selectbox("Selecione o Pedido:", lotes_dash)
+            if ped_sel != "Todos os Pedidos":
+                df_filtrado = df_dash[df_dash["lote_id"] == ped_sel]
+            else:
+                df_filtrado = df_dash.copy()
+        else:
+            data_min = df_dash["data_dt"].min() if not df_dash["data_dt"].dropna().empty else datetime.now()
+            data_max = df_dash["data_dt"].max() if not df_dash["data_dt"].dropna().empty else datetime.now()
+            
+            with col_dash_f2:
+                intervalo_datas = st.date_input("Selecione o Período:", value=(data_min, data_max))
+                
+            if isinstance(intervalo_datas, tuple) and len(intervalo_datas) == 2:
+                d_ini, d_fim = intervalo_datas
+                df_filtrado = df_dash[(df_dash["data_dt"] >= pd.to_datetime(d_ini)) & (df_dash["data_dt"] <= pd.to_datetime(d_fim))]
+            else:
+                df_filtrado = df_dash.copy()
+
+        st.markdown("---")
+
+        if df_filtrado.empty:
+            st.warning("Nenhum registro encontrado para o filtro selecionado.")
+        else:
+            # 1. CARDS DE INDICADORES (KPIs)
+            tot_bones = len(df_filtrado)
+            val_total_prod = df_filtrado["preco"].sum()
+            ticket_medio = val_total_prod / tot_bones if tot_bones > 0 else 0
+            
+            entregues_cnt = len(df_filtrado[df_filtrado["status"] == "Entregue / Retirado"])
+            pct_entregue = (entregues_cnt / tot_bones * 100) if tot_bones > 0 else 0
+
+            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+            kpi1.metric("Total de Bonés", f"{tot_bones} un")
+            kpi2.metric("Valor Total da Produção", f"R$ {val_total_prod:.2f}")
+            kpi3.metric("Preço Médio / Boné", f"R$ {ticket_medio:.2f}")
+            kpi4.metric("Concluídos / Entregues", f"{pct_entregue:.0f}%")
+
+            st.markdown("---")
+
+            # 2. GRÁFICOS INTERATIVOS COM PLOTLY
+            col_g1, col_g2 = st.columns(2)
+
+            with col_g1:
+                st.subheader("🎨 Distribuição por Cor do Boné")
+                df_cores = df_filtrado.groupby("cor_bone").size().reset_index(name="Quantidade")
+                df_cores = df_cores.sort_values(by="Quantidade", ascending=False)
+
+                fig_cores = px.pie(
+                    df_cores, 
+                    names="cor_bone", 
+                    values="Quantidade", 
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.qualitative.Pastel
+                )
+                fig_cores.update_traces(textinfo="value+percent")
+                st.plotly_chart(fig_cores, use_container_width=True)
+
+            with col_g2:
+                st.subheader("📊 Status do Processo de Produção")
+                df_status = df_filtrado.groupby("status").size().reset_index(name="Quantidade")
+                
+                # Garantir ordem visual lógica das etapas
+                ordem_st = {st_nome: i for i, st_nome in enumerate(STATUS_OPCOES)}
+                df_status["ordem"] = df_status["status"].map(ordem_st)
+                df_status = df_status.sort_values(by="ordem")
+
+                fig_status = px.bar(
+                    df_status, 
+                    x="Quantidade", 
+                    y="status", 
+                    orientation="h",
+                    text="Quantidade",
+                    color="status",
+                    color_discrete_map={
+                        "Em Produção": "#FFA500",
+                        "Concluído": "#2E8B57",
+                        "Entregue / Retirado": "#1E90FF"
+                    }
+                )
+                fig_status.update_traces(textposition="outside")
+                fig_status.update_layout(showlegend=False, yaxis_title="")
+                st.plotly_chart(fig_status, use_container_width=True)
+
+            col_g3, col_g4 = st.columns(2)
+
+            with col_g3:
+                st.subheader("🧢 Produção por Modelo / Produto")
+                df_tipo = df_filtrado.groupby("tipo").size().reset_index(name="Quantidade")
+                
+                fig_tipo = px.bar(
+                    df_tipo, 
+                    x="tipo", 
+                    y="Quantidade", 
+                    text="Quantidade",
+                    color="tipo",
+                    color_discrete_sequence=px.colors.qualitative.Set2
+                )
+                fig_tipo.update_traces(textposition="outside")
+                fig_tipo.update_layout(showlegend=False, xaxis_title="Modelo")
+                st.plotly_chart(fig_tipo, use_container_width=True)
+
+            with col_g4:
+                st.subheader("🧵 Top 5 Cores de Estampa Mais Pedidas")
+                df_linha = df_filtrado.groupby("cor_linha").size().reset_index(name="Quantidade")
+                df_linha = df_linha.sort_values(by="Quantidade", ascending=False).head(5)
+
+                fig_linha = px.bar(
+                    df_linha, 
+                    x="Quantidade", 
+                    y="cor_linha", 
+                    orientation="h",
+                    text="Quantidade",
+                    color_discrete_sequence=["#8A2BE2"]
+                )
+                fig_linha.update_traces(textposition="outside")
+                fig_linha.update_layout(showlegend=False, yaxis_title="Cor da Linha")
+                st.plotly_chart(fig_linha, use_container_width=True)
