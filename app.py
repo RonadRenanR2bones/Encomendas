@@ -34,12 +34,16 @@ st.markdown('''
 </style>
 ''', unsafe_allow_html=True)
 
-# Banco de dados e diretório de uploads
+# Banco de dados e diretórios de uploads
 DB_NAME = "ordens_producao.db"
 UPLOADS_DIR = "uploads"
+COMPROVANTES_DIR = "comprovantes"
 
 if not os.path.exists(UPLOADS_DIR):
     os.makedirs(UPLOADS_DIR)
+
+if not os.path.exists(COMPROVANTES_DIR):
+    os.makedirs(COMPROVANTES_DIR)
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -67,10 +71,17 @@ def init_db():
             data_pagamento TEXT,
             valor_pago REAL,
             forma_pagamento TEXT,
-            observacoes TEXT
+            observacoes TEXT,
+            comprovante_path TEXT
         )
     ''')
     
+    # Garantir que a coluna comprovante_path exista caso o banco já tenha sido criado antes
+    c.execute("PRAGMA table_info(pagamentos)")
+    colunas = [column[1] for column in c.fetchall()]
+    if "comprovante_path" not in colunas:
+        c.execute("ALTER TABLE pagamentos ADD COLUMN comprovante_path TEXT")
+
     c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
         
     conn.commit()
@@ -93,6 +104,13 @@ def deletar_item(item_id):
 def deletar_pagamento(pagamento_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    c.execute("SELECT comprovante_path FROM pagamentos WHERE id = ?", (pagamento_id,))
+    res = c.fetchone()
+    if res and res[0] and os.path.exists(res[0]):
+        try:
+            os.remove(res[0])
+        except Exception:
+            pass
     c.execute("DELETE FROM pagamentos WHERE id = ?", (pagamento_id,))
     conn.commit()
     conn.close()
@@ -125,6 +143,24 @@ def gerar_excel_expandido(df):
         output.seek(0)
         return output, "text/csv", "csv"
 
+# -------------------------------------------------------------
+# MODAL SUSPENSO COM LUPA PARA CONSULTA POR NOME/TERMO
+# -------------------------------------------------------------
+@st.dialog("🔍 Buscar e Selecionar Pedido")
+def modal_buscar_pedido(key_prefix, lista_lotes):
+    st.write("Digite o nome ou número do pedido para filtrar:")
+    termo = st.text_input("Buscar por Nome:", key=f"search_{key_prefix}")
+    
+    lotes_filtrados = [l for l in lista_lotes if termo.lower() in str(l).lower()] if termo else lista_lotes
+    
+    if lotes_filtrados:
+        selecionado = st.radio("Selecione o pedido na lista:", lotes_filtrados, key=f"radio_{key_prefix}")
+        if st.button("Confirmar Seleção", key=f"btn_confirm_{key_prefix}", use_container_width=True):
+            st.session_state[f"selected_lote_{key_prefix}"] = selecionado
+            st.rerun()
+    else:
+        st.warning("Nenhum pedido encontrado com este termo.")
+
 init_db()
 
 # Título Principal
@@ -150,25 +186,41 @@ if perfil == "R2 Bonés":
     elif senha_digitada != "":
         st.sidebar.error("❌ Senha incorreta!")
 
+# -------------------------------------------------------------
+# GESTÃO DE BANCO DE DADOS (VISÍVEL APENAS PARA ADMINISTRADORES)
+# -------------------------------------------------------------
+if is_admin:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💾 Gestão do Banco de Dados")
+
+    # Upload para restaurar um banco .db de fora
+    uploaded_db = st.sidebar.file_uploader("📥 Importar / Restaurar Banco (.db)", type=["db", "sqlite", "sqlite3"], key="uploader_db_sidebar")
+
+    if uploaded_db is not None:
+        with open(DB_NAME, "wb") as f:
+            f.write(uploaded_db.getbuffer())
+        st.sidebar.success("✅ Banco atualizado com sucesso!")
+        st.rerun()
+
+    # Download do Backup do banco de dados atual
+    if os.path.exists(DB_NAME):
+        with open(DB_NAME, "rb") as f_db:
+            st.sidebar.download_button(
+                label="📤 Baixar Backup Atual (.db)",
+                data=f_db,
+                file_name="ordens_producao.db",
+                mime="application/x-sqlite3",
+                use_container_width=True
+            )
+
+st.sidebar.markdown("---")
+
 if is_admin:
     menu_options = ["➕ Encomenda", "📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
 else:
     menu_options = ["📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
 
 menu = st.sidebar.radio("Navegação", menu_options)
-
-# -------------------------------------------------------------
-# BOTÃO TEMPORÁRIO PARA EXTRAIR O BANCO DE DADOS ATUAL
-# -------------------------------------------------------------
-if os.path.exists(DB_NAME):
-    with open(DB_NAME, "rb") as f_db:
-        st.sidebar.download_button(
-            label="💾 BAIXAR BANCO DE DADOS ATUAL (.db)",
-            data=f_db,
-            file_name="ordens_producao.db",
-            mime="application/x-sqlite3"
-        )
-st.sidebar.markdown("---")
 
 # -------------------------------------------------------------
 # 1. TELA DE ENCOMENDA (ADMINISTRADOR / R2 BONÉS)
@@ -183,12 +235,26 @@ if menu == "➕ Encomenda":
     lotes_existentes = [row[0] for row in c.fetchall()]
     conn.close()
 
+    if "selected_lote_encomenda" not in st.session_state and lotes_existentes:
+        st.session_state["selected_lote_encomenda"] = lotes_existentes[0]
+
     col_l1, col_l2 = st.columns(2)
     with col_l1:
         opcao_lote = st.radio("Pedido:", ["Consulta Pedido", "Novo Pedido"], horizontal=True)
         
         if opcao_lote == "Consulta Pedido" and lotes_existentes:
-            nome_lote = st.selectbox("Consultar Pedido", lotes_existentes)
+            c_sel, c_btn = st.columns([3, 1])
+            with c_sel:
+                nome_lote = st.selectbox(
+                    "Consultar Pedido", 
+                    lotes_existentes, 
+                    index=lotes_existentes.index(st.session_state["selected_lote_encomenda"]) if st.session_state["selected_lote_encomenda"] in lotes_existentes else 0
+                )
+                st.session_state["selected_lote_encomenda"] = nome_lote
+            with c_btn:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("🔍 Lupa", key="btn_lupa_encomenda", help="Abrir busca suspensa por nome"):
+                    modal_buscar_pedido("encomenda", lotes_existentes)
         else:
             nome_lote_padrao = datetime.now().strftime("%d/%m/%Y")
             nome_lote = st.text_input("Nome do Novo Pedido:", value=nome_lote_padrao, help="Ex: 01/10/2026, Pedido Feirarte")
@@ -278,11 +344,8 @@ if menu == "➕ Encomenda":
                     st.success("Item excluído com sucesso!")
                     st.rerun()
 
-            # -------------------------------------------------------------
-            # SEÇÃO DE ALTERAÇÃO / EDIÇÃO DE ITENS NO MENU ENCOMENDA
-            # -------------------------------------------------------------
             st.markdown("---")
-            st.subheader("✏️ Alterar / Editar Informações do Item")
+            st.subheader("✏ Alterar / Editar Informações do Item")
             
             dict_itens_edit = {row["id"]: f"ID #{row['id']} - {row['cor_bone']} / {row['frase_arte']}" for _, row in df_lote_atual.iterrows()}
             id_para_editar = st.selectbox("Selecione o item do pedido para editar:", options=list(dict_itens_edit.keys()), format_func=lambda x: dict_itens_edit[x], key="select_item_edit")
@@ -371,7 +434,22 @@ elif menu == "📋 Produção":
             status_filter = st.multiselect("Filtrar por Status", options=["Em Produção", "Concluído"], default=["Em Produção"])
         with col_f2:
             lotes_disponiveis = ["Todos"] + list(df["lote_id"].dropna().unique())
-            lote_filter = st.selectbox("Filtrar por Lote / Encomenda", lotes_disponiveis)
+            
+            if "selected_lote_prod" not in st.session_state:
+                st.session_state["selected_lote_prod"] = "Todos"
+                
+            c_prod_sel, c_prod_btn = st.columns([3, 1])
+            with c_prod_sel:
+                lote_filter = st.selectbox(
+                    "Filtrar por Lote / Encomenda", 
+                    lotes_disponiveis,
+                    index=lotes_disponiveis.index(st.session_state["selected_lote_prod"]) if st.session_state["selected_lote_prod"] in lotes_disponiveis else 0
+                )
+                st.session_state["selected_lote_prod"] = lote_filter
+            with c_prod_btn:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("🔍 Lupa", key="btn_lupa_producao", help="Abrir busca suspensa por nome"):
+                    modal_buscar_pedido("prod", lotes_disponiveis)
 
         if status_filter:
             df = df[df["status"].isin(status_filter)]
@@ -390,9 +468,12 @@ elif menu == "📋 Produção":
                     else:
                         st.warning("⚠️ Sem foto de referência cadastrada")
                 with col_info:
-                    st.subheader(f"Boné: {row['cor_bone']}")
+                    # Reformatação visual conforme Imagem 1
                     if row["lote_id"]:
                         st.markdown(f"📦 **Pedido:** `{row['lote_id']}`")
+                    
+                    cor_bone_fmt = f"`{row['cor_bone']}`" if row['cor_bone'] else "-"
+                    st.markdown(f"**Cor do Boné:** {cor_bone_fmt}")
                     
                     arte_fmt = f"`{row['frase_arte']}`" if row['frase_arte'] else "-"
                     cor_linha_fmt = f"`{row['cor_linha']}`" if row['cor_linha'] else "-"
@@ -470,7 +551,7 @@ elif menu == "📊 Tabela Geral":
                     with col_t:
                         st.dataframe(df_exibicao_lote, use_container_width=True, hide_index=True)
                     with col_d:
-                        st.markdown("##### 🗑️ Excluir Item")
+                        st.markdown("##### 🗑 Excluir Item")
                         dict_itens_tbl = {row["id"]: f"{row['cor_bone']} - {row['frase_arte']}" for _, row in df_lote.iterrows()}
                         id_del = st.selectbox("Item:", options=list(dict_itens_tbl.keys()), format_func=lambda x: dict_itens_tbl[x], key=f"sel_tbl_{lote}")
                         if st.button("❌ Excluir", key=f"btn_del_tbl_{lote}"):
@@ -481,7 +562,6 @@ elif menu == "📊 Tabela Geral":
                     st.dataframe(df_exibicao_lote, use_container_width=True, hide_index=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
-                # Botão de Exportar Excel/CSV Individual por Pedido
                 excel_lote_bytes, mime_lote, ext_lote = gerar_excel_expandido(df_exibicao_lote)
                 
                 lote_filename = str(lote).replace('/', '-').replace(' ', '_')
@@ -498,7 +578,7 @@ elif menu == "📊 Tabela Geral":
 # -------------------------------------------------------------
 elif menu == "💰 Financeiro":
     st.header("💰 Controle Financeiro de Pedidos")
-    st.write("Acompanhamento de pagamentos por pedido (adiantamentos de 50% e quitações).")
+    st.write("Acompanhamento de pagamentos por pedido (adiantamentos e quitações).")
 
     conn = sqlite3.connect(DB_NAME)
     df_pedidos = pd.read_sql_query("SELECT lote_id, SUM(preco) as total_pedido FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' GROUP BY lote_id ORDER BY min(id) DESC", conn)
@@ -516,7 +596,16 @@ elif menu == "💰 Financeiro":
                 with st.form("form_pagamento", clear_on_submit=True):
                     col_p1, col_p2, col_p3 = st.columns(3)
                     with col_p1:
-                        lote_pag = st.selectbox("Selecione o Pedido:", lotes_list)
+                        if "selected_lote_fin" not in st.session_state:
+                            st.session_state["selected_lote_fin"] = lotes_list[0]
+                            
+                        lote_pag = st.selectbox(
+                            "Selecione o Pedido:", 
+                            lotes_list,
+                            index=lotes_list.index(st.session_state["selected_lote_fin"]) if st.session_state["selected_lote_fin"] in lotes_list else 0
+                        )
+                        st.session_state["selected_lote_fin"] = lote_pag
+                        
                         row_pedido = df_pedidos[df_pedidos["lote_id"] == lote_pag]
                         val_total = row_pedido["total_pedido"].values[0] if not row_pedido.empty else 0.0
                         st.caption(f"Valor Total do Pedido: **R$ {val_total:.2f}**")
@@ -524,11 +613,13 @@ elif menu == "💰 Financeiro":
                     with col_p2:
                         val_sugerido = val_total * 0.5
                         valor_pago_str = st.text_input("Valor Pago (R$)", value=f"{val_sugerido:.2f}".replace(".", ","), help="Sugerido 50% de entrada")
-                        forma_pag = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Transferência", "Outro"])
+                        # Restrito apenas a Pix e Cartão de Crédito
+                        forma_pag = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito"])
 
                     with col_p3:
                         data_pag = st.date_input("Data do Pagamento", value=datetime.now())
                         obs_pag = st.text_input("Observação", placeholder="Ex: Entrada 50%, Sinal, Quitação final")
+                        uploaded_comp = st.file_uploader("Comprovante de Pagamento (Opcional)", type=["jpg", "jpeg", "png", "pdf"])
 
                     submit_pag = st.form_submit_button("💳 Registrar Pagamento", use_container_width=True)
 
@@ -541,13 +632,21 @@ elif menu == "💰 Financeiro":
                         if val_pago_num <= 0:
                             st.error("Insira um valor pago válido.")
                         else:
+                            comp_path = ""
+                            if uploaded_comp is not None:
+                                file_ext = uploaded_comp.name.split(".")[-1]
+                                filename_comp = f"comp_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.{file_ext}"
+                                comp_path = os.path.join(COMPROVANTES_DIR, filename_comp)
+                                with open(comp_path, "wb") as f:
+                                    f.write(uploaded_comp.getbuffer())
+
                             data_pag_str = data_pag.strftime("%d/%m/%Y")
                             conn = sqlite3.connect(DB_NAME)
                             c = conn.cursor()
                             c.execute('''
-                                INSERT INTO pagamentos (lote_id, data_pagamento, valor_pago, forma_pagamento, observacoes)
-                                VALUES (?, ?, ?, ?, ?)
-                            ''', (lote_pag, data_pag_str, val_pago_num, forma_pag, obs_pag))
+                                INSERT INTO pagamentos (lote_id, data_pagamento, valor_pago, forma_pagamento, observacoes, comprovante_path)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            ''', (lote_pag, data_pag_str, val_pago_num, forma_pag, obs_pag, comp_path))
                             conn.commit()
                             conn.close()
                             st.success(f"✅ Pagamento de R$ {val_pago_num:.2f} registrado para o pedido '{lote_pag}'!")
@@ -581,28 +680,28 @@ elif menu == "💰 Financeiro":
 
                 st.markdown("##### Histórico de Pagamentos")
                 if not df_pag_lote.empty:
-                    df_exib_pag = df_pag_lote[["data_pagamento", "valor_pago", "forma_pagamento", "observacoes"]].copy()
-                    df_exib_pag["valor_pago"] = df_exib_pag["valor_pago"].apply(lambda x: f"R$ {x:.2f}")
-                    df_exib_pag = df_exib_pag.rename(columns={
-                        "data_pagamento": "Data",
-                        "valor_pago": "Valor Pago",
-                        "forma_pagamento": "Forma de Pagamento",
-                        "observacoes": "Observações"
-                    })
-                    
-                    if is_admin:
-                        c_tbl, c_del_p = st.columns([4, 1])
-                        with c_tbl:
-                            st.dataframe(df_exib_pag, use_container_width=True, hide_index=True)
-                        with c_del_p:
-                            dict_pags = {p_row["id"]: f"R$ {p_row['valor_pago']:.2f} ({p_row['data_pagamento']})" for _, p_row in df_pag_lote.iterrows()}
-                            id_del_p = st.selectbox("Pagamento:", options=list(dict_pags.keys()), format_func=lambda x: dict_pags[x], key=f"sel_pag_{lote}")
-                            if st.button("❌ Remover Pagamento", key=f"btn_del_pag_{lote}"):
-                                deletar_pagamento(id_del_p)
-                                st.success("Pagamento removido!")
-                                st.rerun()
-                    else:
-                        st.dataframe(df_exib_pag, use_container_width=True, hide_index=True)
+                    for _, p_row in df_pag_lote.iterrows():
+                        col_p_info, col_p_comp, col_p_act = st.columns([3, 1, 1])
+                        with col_p_info:
+                            st.write(f"🗓 **Data:** {p_row['data_pagamento']} | 💰 **Valor:** R$ {p_row['valor_pago']:.2f} | 💳 **Forma:** {p_row['forma_pagamento']} | 📌 **Obs:** {p_row['observacoes'] or '-'}")
+                        with col_p_comp:
+                            c_path = p_row.get("comprovante_path")
+                            if c_path and os.path.exists(str(c_path)):
+                                with open(c_path, "rb") as file_bytes:
+                                    st.download_button(
+                                        label="📎 Comprovante",
+                                        data=file_bytes,
+                                        file_name=os.path.basename(c_path),
+                                        key=f"dl_comp_{p_row['id']}"
+                                    )
+                            else:
+                                st.caption("Sem comprovante")
+                        with col_p_act:
+                            if is_admin:
+                                if st.button("❌ Excluir", key=f"btn_del_pag_{p_row['id']}"):
+                                    deletar_pagamento(p_row['id'])
+                                    st.success("Pagamento removido!")
+                                    st.rerun()
                 else:
                     st.caption("Nenhum pagamento registrado para este pedido ainda.")
 
@@ -611,15 +710,12 @@ elif menu == "💰 Financeiro":
                 
                 if not df_itens_lote.empty:
                     df_resumo_prod = df_itens_lote.groupby("tipo").agg(
-                        Quantidade=('tipo', 'count'),
-                        Subtotal=('preco', 'sum')
+                        Quantidade=('tipo', 'count')
                     ).reset_index()
 
-                    fator_adiantado = (total_pago / total_pedido) if total_pedido > 0 else 0.0
-
-                    df_resumo_prod["Valor Adiantado"] = df_resumo_prod["Subtotal"].apply(lambda val: f"R$ {(val * fator_adiantado):.2f}")
-                    df_resumo_prod = df_resumo_prod.rename(columns={"tipo": "Produto"})[["Produto", "Quantidade", "Valor Adiantado"]]
-
+                    df_resumo_prod = df_resumo_prod.rename(columns={"tipo": "Produto"})[["Produto", "Quantidade"]]
                     st.dataframe(df_resumo_prod, use_container_width=True, hide_index=True)
+                    
+                    st.markdown(f"💰 **Valor Total Adiantado:** `R$ {total_pago:.2f}`")
                 else:
                     st.caption("Nenhum item vinculado a este pedido.")
