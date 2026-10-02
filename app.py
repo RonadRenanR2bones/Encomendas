@@ -158,6 +158,19 @@ else:
 menu = st.sidebar.radio("Navegação", menu_options)
 
 # -------------------------------------------------------------
+# BOTÃO TEMPORÁRIO PARA EXTRAIR O BANCO DE DADOS ATUAL
+# -------------------------------------------------------------
+if os.path.exists(DB_NAME):
+    with open(DB_NAME, "rb") as f_db:
+        st.sidebar.download_button(
+            label="💾 BAIXAR BANCO DE DADOS ATUAL (.db)",
+            data=f_db,
+            file_name="ordens_producao.db",
+            mime="application/x-sqlite3"
+        )
+st.sidebar.markdown("---")
+
+# -------------------------------------------------------------
 # 1. TELA DE ENCOMENDA (ADMINISTRADOR / R2 BONÉS)
 # -------------------------------------------------------------
 if menu == "➕ Encomenda":
