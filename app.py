@@ -16,7 +16,7 @@ st.set_page_config(
 # Senha fixa para o ambiente de Administração
 ADMIN_PASSWORD_FIXA = "26210837"
 
-# Estilo CSS customizado (incluindo alinhamento à esquerda para tabelas no resumo financeiro)
+# Estilo CSS customizado
 st.markdown('''
 <style>
     .status-texto {
@@ -168,7 +168,7 @@ def modal_buscar_pedido(key_prefix, lista_lotes):
 # -------------------------------------------------------------
 # MODAL SUSPENSO PARA VISUALIZAR FOTO DE REFERÊNCIA
 # -------------------------------------------------------------
-@st.dialog("🖼️ Foto de Referência da Estampa")
+@st.dialog("📸 Foto de Referência da Estampa")
 def modal_visualizar_foto(img_path, nome_arte):
     if img_path and os.path.exists(img_path):
         st.image(img_path, use_container_width=True, caption=f"Arte: {nome_arte}")
@@ -243,6 +243,9 @@ if is_admin:
                 mime="application/x-sqlite3",
                 use_container_width=True
             )
+
+# Lista global de etapas de status
+STATUS_OPCOES = ["Em Produção", "Concluído", "Entregue / Retirado"]
 
 # -------------------------------------------------------------
 # 1. TELA DE ENCOMENDA (ADMINISTRADOR / R2 BONÉS)
@@ -394,9 +397,8 @@ if menu == "➕ Encomenda":
                     edit_preco_str = st.text_input("Preço Unitário (R$)", value=f"{item_dados['preco']:.2f}".replace(".", ","))
                     edit_observacoes = st.text_input("Observações Específicas", value=item_dados["observacoes"] or "")
                     
-                    status_options = ["Em Produção", "Concluído"]
-                    idx_status = status_options.index(item_dados["status"]) if item_dados["status"] in status_options else 0
-                    edit_status = st.selectbox("Status do Item", status_options, index=idx_status)
+                    idx_status = STATUS_OPCOES.index(item_dados["status"]) if item_dados["status"] in STATUS_OPCOES else 0
+                    edit_status = st.selectbox("Status do Item", STATUS_OPCOES, index=idx_status)
 
                     st.markdown("<br>", unsafe_allow_html=True)
                     btn_salvar_edicao = st.form_submit_button("💾 Salvar Alterações", use_container_width=True)
@@ -478,9 +480,13 @@ elif menu == "📋 Produção":
                 if st.button("🔍", key="btn_lupa_producao", help="Abrir busca suspensa por nome"):
                     modal_buscar_pedido("prod", lotes_disponiveis)
 
-        # COLUNA 2: FILTRAR POR STATUS
+        # COLUNA 2: FILTRAR POR STATUS (INCLUINDO "Entregue / Retirado")
         with col_f2:
-            status_filter = st.multiselect("Filtrar por Status", options=["Em Produção", "Concluído"], default=["Em Produção"])
+            status_filter = st.multiselect(
+                "Filtrar por Status", 
+                options=STATUS_OPCOES, 
+                default=["Em Produção", "Concluído"]
+            )
 
         if status_filter:
             df = df[df["status"].isin(status_filter)]
@@ -508,13 +514,13 @@ elif menu == "📋 Produção":
                     st.markdown(f"**Cor da Estampa:** {cor_linha_fmt}")
                     st.markdown(f"**Produto:** `{row['tipo']}`")
                     
-                    # FOTO DE REFERÊNCIA EM BOTÃO POP-UP
+                    # FOTO DE REFERÊNCIA EM BOTÃO POP-UP COM ÍCONE DE CÂMERA E ALINHAMENTO PRÓXIMO
                     if row["imagem_path"] and os.path.exists(row["imagem_path"]):
-                        c_ref_lbl, c_ref_btn = st.columns([1, 2])
+                        c_ref_lbl, c_ref_btn = st.columns([1.1, 1])
                         with c_ref_lbl:
                             st.write("**Foto de Referência:**")
                         with c_ref_btn:
-                            if st.button("🖼️ Ver Foto", key=f"btn_pop_img_{row['id']}"):
+                            if st.button("📸 Ver Foto", key=f"btn_pop_img_{row['id']}"):
                                 modal_visualizar_foto(row["imagem_path"], row["frase_arte"])
                     else:
                         st.markdown("**Foto de Referência:** `Sem foto cadastrada`")
@@ -528,10 +534,11 @@ elif menu == "📋 Produção":
                     
                     st.markdown(f"**Status Atual:** **{row['status']}**")
                     
+                    idx_st = STATUS_OPCOES.index(row["status"]) if row["status"] in STATUS_OPCOES else 0
                     novo_status = st.selectbox(
                         "Atualizar Status", 
-                        ["Em Produção", "Concluído"], 
-                        index=["Em Produção", "Concluído"].index(row["status"]) if row["status"] in ["Em Produção", "Concluído"] else 0, 
+                        STATUS_OPCOES, 
+                        index=idx_st, 
                         key=f"status_{row['id']}"
                     )
                     if novo_status != row["status"]:
@@ -753,7 +760,7 @@ elif menu == "💰 Financeiro":
 
                     df_resumo_prod = df_resumo_prod.rename(columns={"tipo": "Produto"})[["Produto", "Quantidade"]]
                     
-                    # Converte a coluna Quantidade para string simples para garantir que a formatação numérica não centralize ou alinhe à direita por padrão
+                    # Converte a coluna Quantidade para string simples para manter alinhamento à esquerda
                     df_resumo_prod["Quantidade"] = df_resumo_prod["Quantidade"].astype(str)
                     
                     st.dataframe(df_resumo_prod, use_container_width=True, hide_index=True)
