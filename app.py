@@ -65,9 +65,22 @@ def init_db():
             preco REAL,
             observacoes TEXT,
             imagem_path TEXT,
-            status TEXT
+            status TEXT,
+            valor_estampa_extra REAL DEFAULT 0.0,
+            valor_matriz REAL DEFAULT 0.0
         )
     ''')
+    
+    # Garantir compatibilidade com bancos existentes adicionando as novas colunas se não existirem
+    c.execute("PRAGMA table_info(pedidos)")
+    colunas_pedidos = [column[1] for column in c.fetchall()]
+    if "valor_estampa_extra" not in colunas_pedidos:
+        c.execute("ALTER TABLE pedidos ADD COLUMN valor_estampa_extra REAL DEFAULT 0.0")
+    if "valor_matriz" not in colunas_pedidos:
+        c.execute("ALTER TABLE pedidos ADD COLUMN valor_matriz REAL DEFAULT 0.0")
+
+    # Migrar nome do produto 'Simples' antigo para 'Básico'
+    c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
     
     c.execute('''
         CREATE TABLE IF NOT EXISTS pagamentos (
@@ -205,7 +218,7 @@ if perfil == "R2 Bonés":
 else:
     st.session_state["admin_autenticado"] = False
 
-# NAVEGAÇÃO (Incluindo o novo "📈 Dashboard ADM" apenas para ADM)
+# NAVEGAÇÃO
 if is_admin:
     menu_options = ["➕ Encomenda", "📋 Produção", "📊 Tabela Geral", "💰 Financeiro", "📈 Dashboard ADM"]
 else:
@@ -214,7 +227,7 @@ else:
 menu = st.sidebar.radio("", menu_options, label_visibility="collapsed")
 
 # -------------------------------------------------------------
-# GESTÃO DE BANCO DE DADOS (ABAIXO DA NAVEGAÇÃO - APENAS ADM)
+# GESTÃO DE BANCO DE DADOS (APENAS ADM)
 # -------------------------------------------------------------
 if is_admin:
     st.sidebar.markdown("---")
@@ -293,8 +306,15 @@ if menu == "➕ Encomenda":
             uploaded_file = st.file_uploader("Foto / Imagem de Referência da Estampa (Opcional)", type=["jpg", "jpeg", "png", "webp"])
 
         with col2:
-            tipo = st.selectbox("Produto", ["Simples", "Premium", "Kids", "Outro"])
+            tipo = st.selectbox("Produto", ["Básico", "Premium", "Kids", "Estampa Extra", "Outro"])
             preco_str = st.text_input("Preço Unitário (R$)", value="29,00")
+            
+            # Novo campo Estampa Extra (Valor R$) abaixo do Preço Unitário
+            estampa_extra_str = st.text_input("Estampa Extra (R$)", value="0,00", help="Informe o valor adicional para estampa extra (opcional)")
+            
+            # Taxa opcional Matriz de Bordado
+            matriz_str = st.text_input("Taxa Matriz de Bordado (R$)", value="0,00", help="Taxa pontual aplicável quando há intervenção técnica/profissional de programação (opcional)")
+            
             observacoes = st.text_input("Observações Específicas", placeholder="Ex: Bordado frontal 12cm, fonte manuscrita")
             
             st.markdown("<br>", unsafe_allow_html=True)
@@ -305,6 +325,16 @@ if menu == "➕ Encomenda":
                 preco_val = float(preco_str.replace(",", ".").replace("R$", "").strip())
             except ValueError:
                 preco_val = 29.0
+
+            try:
+                estampa_extra_val = float(estampa_extra_str.replace(",", ".").replace("R$", "").strip())
+            except ValueError:
+                estampa_extra_val = 0.0
+
+            try:
+                matriz_val = float(matriz_str.replace(",", ".").replace("R$", "").strip())
+            except ValueError:
+                matriz_val = 0.0
 
             if not cor_bone or not frase_arte:
                 st.error("Por favor, preencha a cor do boné e a arte estampada.")
@@ -322,9 +352,9 @@ if menu == "➕ Encomenda":
                 conn = sqlite3.connect(DB_NAME)
                 c = conn.cursor()
                 c.execute('''
-                    INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (nome_lote, data_atual, cor_bone, frase_arte, cor_linha, tipo, preco_val, observacoes, img_path, "Em Produção"))
+                    INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (nome_lote, data_atual, cor_bone, frase_arte, cor_linha, tipo, preco_val, observacoes, img_path, "Em Produção", estampa_extra_val, matriz_val))
                 conn.commit()
                 conn.close()
                 st.success(f"✅ Boné '{frase_arte}' adicionado com sucesso ao pedido '{nome_lote}'!")
@@ -332,12 +362,15 @@ if menu == "➕ Encomenda":
     st.markdown("---")
     st.subheader(f"📦 Resumo da Produção Pedido '{nome_lote}'")
     conn = sqlite3.connect(DB_NAME)
-    df_lote_atual = pd.read_sql_query("SELECT * FROM pedidos WHERE lote_id = ? ORDER BY id DESC", conn, params=(nome_lote,))
+    df_lote_atual = pd.read_sql_query("SELECT *, (preco + valor_estampa_extra + valor_matriz) as preco_total FROM pedidos WHERE lote_id = ? ORDER BY id DESC", conn, params=(nome_lote,))
     conn.close()
 
     if not df_lote_atual.empty:
         df_exibicao = df_lote_atual.copy()
-        df_exibicao["Preço"] = df_exibicao["preco"].apply(lambda x: f"R$ {x:.2f}")
+        df_exibicao["Preço Base"] = df_exibicao["preco"].apply(lambda x: f"R$ {x:.2f}")
+        df_exibicao["Estampa Extra"] = df_exibicao["valor_estampa_extra"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
+        df_exibicao["Matriz Bordado"] = df_exibicao["valor_matriz"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
+        df_exibicao["Preço Total"] = df_exibicao["preco_total"].apply(lambda x: f"R$ {x:.2f}")
         df_exibicao["Cor da Estampa"] = df_exibicao["cor_linha"].apply(lambda x: x if x else "-")
         df_exibicao["Observações"] = df_exibicao["observacoes"].apply(lambda x: x if x else "-")
         
@@ -346,7 +379,7 @@ if menu == "➕ Encomenda":
             "frase_arte": "Arte Estampada",
             "tipo": "Produto",
             "status": "Status"
-        })[["Cor do Boné", "Arte Estampada", "Cor da Estampa", "Produto", "Preço", "Status", "Observações"]]
+        })[["Cor do Boné", "Arte Estampada", "Cor da Estampa", "Produto", "Preço Base", "Estampa Extra", "Matriz Bordado", "Preço Total", "Status", "Observações"]]
 
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
@@ -383,11 +416,14 @@ if menu == "➕ Encomenda":
                     edit_uploaded_file = st.file_uploader("Substituir Foto / Imagem de Referência (Opcional)", type=["jpg", "jpeg", "png", "webp"], key="file_uploader_edit")
 
                 with col_e2:
-                    prod_options = ["Simples", "Premium", "Kids", "Outro"]
+                    prod_options = ["Básico", "Premium", "Kids", "Estampa Extra", "Outro"]
                     idx_prod = prod_options.index(item_dados["tipo"]) if item_dados["tipo"] in prod_options else 0
                     edit_tipo = st.selectbox("Produto", prod_options, index=idx_prod)
                     
                     edit_preco_str = st.text_input("Preço Unitário (R$)", value=f"{item_dados['preco']:.2f}".replace(".", ","))
+                    edit_estampa_extra_str = st.text_input("Estampa Extra (R$)", value=f"{item_dados['valor_estampa_extra']:.2f}".replace(".", ","))
+                    edit_matriz_str = st.text_input("Taxa Matriz de Bordado (R$)", value=f"{item_dados['valor_matriz']:.2f}".replace(".", ","))
+                    
                     edit_observacoes = st.text_input("Observações Específicas", value=item_dados["observacoes"] or "")
                     
                     idx_status = STATUS_OPCOES.index(item_dados["status"]) if item_dados["status"] in STATUS_OPCOES else 0
@@ -401,6 +437,16 @@ if menu == "➕ Encomenda":
                         novo_preco_val = float(edit_preco_str.replace(",", ".").replace("R$", "").strip())
                     except ValueError:
                         novo_preco_val = item_dados["preco"]
+
+                    try:
+                        novo_extra_val = float(edit_estampa_extra_str.replace(",", ".").replace("R$", "").strip())
+                    except ValueError:
+                        novo_extra_val = item_dados["valor_estampa_extra"]
+
+                    try:
+                        nova_matriz_val = float(edit_matriz_str.replace(",", ".").replace("R$", "").strip())
+                    except ValueError:
+                        nova_matriz_val = item_dados["valor_matriz"]
 
                     caminho_foto = item_dados["imagem_path"]
                     if edit_uploaded_file is not None:
@@ -420,17 +466,18 @@ if menu == "➕ Encomenda":
                     c = conn.cursor()
                     c.execute('''
                         UPDATE pedidos 
-                        SET cor_bone = ?, frase_arte = ?, cor_linha = ?, tipo = ?, preco = ?, observacoes = ?, imagem_path = ?, status = ?
+                        SET cor_bone = ?, frase_arte = ?, cor_linha = ?, tipo = ?, preco = ?, valor_estampa_extra = ?, valor_matriz = ?, observacoes = ?, imagem_path = ?, status = ?
                         WHERE id = ?
-                    ''', (edit_cor_bone, edit_frase_arte, edit_cor_linha, edit_tipo, novo_preco_val, edit_observacoes, caminho_foto, edit_status, id_para_editar))
+                    ''', (edit_cor_bone, edit_frase_arte, edit_cor_linha, edit_tipo, novo_preco_val, novo_extra_val, nova_matriz_val, edit_observacoes, caminho_foto, edit_status, id_para_editar))
                     conn.commit()
                     conn.close()
 
                     st.success("✅ Informações do item atualizadas com sucesso!")
                     st.rerun()
 
+        total_pedido_soma = df_lote_atual['preco_total'].sum()
         st.markdown("---")
-        st.write(f"**Total de itens neste pedido:** {len(df_lote_atual)} boné(s) | **Valor Total:** R$ {df_lote_atual['preco'].sum():.2f}")
+        st.write(f"**Total de itens neste pedido:** {len(df_lote_atual)} boné(s) | **Valor Total do Pedido:** R$ {total_pedido_soma:.2f}")
     else:
         st.caption("Nenhum boné cadastrado neste pedido ainda.")
 
@@ -502,6 +549,11 @@ elif menu == "📋 Produção":
                     st.markdown(f"**Cor da Estampa:** {cor_linha_fmt}")
                     st.markdown(f"**Produto:** `{row['tipo']}`")
                     
+                    if row.get("valor_estampa_extra", 0) > 0:
+                        st.markdown(f"**Estampa Extra:** `R$ {row['valor_estampa_extra']:.2f}`")
+                    if row.get("valor_matriz", 0) > 0:
+                        st.markdown(f"**Taxa Matriz de Bordado:** `R$ {row['valor_matriz']:.2f}`")
+
                     if row["imagem_path"] and os.path.exists(row["imagem_path"]):
                         c_ref_lbl, c_ref_btn = st.columns([1.1, 1])
                         with c_ref_lbl:
@@ -549,31 +601,38 @@ elif menu == "📋 Produção":
 elif menu == "📊 Tabela Geral":
     st.header("📊 Tabela Geral de Pedidos")
     conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, status, observacoes FROM pedidos ORDER BY id DESC", conn)
+    df = pd.read_sql_query("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos ORDER BY id DESC", conn)
     conn.close()
 
     if df.empty:
         st.info("Nenhum pedido cadastrado.")
     else:
         df['lote_id'] = df['lote_id'].fillna('Sem Lote Definido')
+        df['total_item'] = df['preco'] + df['valor_estampa_extra'].fillna(0) + df['valor_matriz'].fillna(0)
         lotes_unicos = df['lote_id'].unique()
 
         for lote in lotes_unicos:
             df_lote = df[df['lote_id'] == lote].copy()
             total_qtd = len(df_lote)
-            total_valor = df_lote['preco'].sum()
+            total_valor = df_lote['total_item'].sum()
             
             with st.expander(f"📦 Pedido: {lote} — ({total_qtd} bonés | Total: R$ {total_valor:.2f})", expanded=False):
                 df_lote["preco"] = df_lote["preco"].apply(lambda x: f"R$ {x:.2f}")
+                df_lote["valor_estampa_extra"] = df_lote["valor_estampa_extra"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
+                df_lote["valor_matriz"] = df_lote["valor_matriz"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
+                df_lote["total_item"] = df_lote["total_item"].apply(lambda x: f"R$ {x:.2f}")
                 df_lote["data_criacao"] = df_lote["data_criacao"].apply(lambda x: x.split(" ")[0] if x else "")
                 
-                cols_ordem = ["cor_bone", "frase_arte", "cor_linha", "tipo", "preco", "status", "observacoes", "data_criacao"]
+                cols_ordem = ["cor_bone", "frase_arte", "cor_linha", "tipo", "preco", "valor_estampa_extra", "valor_matriz", "total_item", "status", "observacoes", "data_criacao"]
                 df_exibicao_lote = df_lote[cols_ordem].rename(columns={
                     "cor_bone": "Cor do Boné",
                     "frase_arte": "Arte Estampada",
                     "cor_linha": "Cor da Estampa",
                     "tipo": "Produto",
-                    "preco": "Preço",
+                    "preco": "Preço Base",
+                    "valor_estampa_extra": "Estampa Extra",
+                    "valor_matriz": "Matriz Bordado",
+                    "total_item": "Total Item",
                     "status": "Status",
                     "observacoes": "Observações",
                     "data_criacao": "Data"
@@ -614,7 +673,7 @@ elif menu == "💰 Financeiro":
     st.write("Acompanhamento de pagamentos por pedido (adiantamentos e quitações).")
 
     conn = sqlite3.connect(DB_NAME)
-    df_pedidos = pd.read_sql_query("SELECT lote_id, SUM(preco) as total_pedido FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' GROUP BY lote_id ORDER BY min(id) DESC", conn)
+    df_pedidos = pd.read_sql_query("SELECT lote_id, SUM(preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_pedido FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' GROUP BY lote_id ORDER BY min(id) DESC", conn)
     df_todos_itens = pd.read_sql_query("SELECT lote_id, tipo, preco FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != ''", conn)
     df_pagamentos = pd.read_sql_query("SELECT * FROM pagamentos ORDER BY id DESC", conn)
     conn.close()
@@ -644,13 +703,13 @@ elif menu == "💰 Financeiro":
                         st.caption(f"Valor Total do Pedido: **R$ {val_total:.2f}**")
                     
                     with col_p2:
-                        val_sugerido = val_total * 0.5
-                        valor_pago_str = st.text_input("Valor Pago (R$)", value=f"{val_sugerido:.2f}".replace(".", ","), help="Sugerido 50% de entrada")
+                        # Campo completamente livre (sem sugestão de 50%)
+                        valor_pago_str = st.text_input("Valor Pago (R$)", value="", placeholder="Digite o valor pago")
                         forma_pag = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito"])
 
                     with col_p3:
                         data_pag = st.date_input("Data do Pagamento", value=datetime.now())
-                        obs_pag = st.text_input("Observação", placeholder="Ex: Entrada 50%, Sinal, Quitação final")
+                        obs_pag = st.text_input("Observação", placeholder="Ex: Entrada, Sinal, Quitação final")
                         uploaded_comp = st.file_uploader("Comprovante de Pagamento (Opcional)", type=["jpg", "jpeg", "png", "pdf"])
 
                     submit_pag = st.form_submit_button("💳 Registrar Pagamento", use_container_width=True)
@@ -762,13 +821,12 @@ elif menu == "📈 Dashboard ADM":
     st.write("Acompanhe o desempenho, volume de produção por cor, produto e status em tempo real.")
 
     conn = sqlite3.connect(DB_NAME)
-    df_dash = pd.read_sql_query("SELECT * FROM pedidos ORDER BY id DESC", conn)
+    df_dash = pd.read_sql_query("SELECT *, (preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_item FROM pedidos ORDER BY id DESC", conn)
     conn.close()
 
     if df_dash.empty:
         st.info("Nenhum pedido cadastrado no banco de dados para gerar indicadores.")
     else:
-        # Tratamento de datas para filtro
         df_dash["data_dt"] = pd.to_datetime(df_dash["data_criacao"], format="%d/%m/%Y", errors="coerce")
         
         st.markdown("### 🎯 Seleção do Escopo do Dashboard")
@@ -804,9 +862,8 @@ elif menu == "📈 Dashboard ADM":
         if df_filtrado.empty:
             st.warning("Nenhum registro encontrado para o filtro selecionado.")
         else:
-            # 1. CARDS DE INDICADORES (KPIs)
             tot_bones = len(df_filtrado)
-            val_total_prod = df_filtrado["preco"].sum()
+            val_total_prod = df_filtrado["total_item"].sum()
             ticket_medio = val_total_prod / tot_bones if tot_bones > 0 else 0
             
             entregues_cnt = len(df_filtrado[df_filtrado["status"] == "Entregue / Retirado"])
@@ -820,7 +877,6 @@ elif menu == "📈 Dashboard ADM":
 
             st.markdown("---")
 
-            # 2. GRÁFICOS INTERATIVOS COM PLOTLY
             col_g1, col_g2 = st.columns(2)
 
             with col_g1:
@@ -842,7 +898,6 @@ elif menu == "📈 Dashboard ADM":
                 st.subheader("📊 Status do Processo de Produção")
                 df_status = df_filtrado.groupby("status").size().reset_index(name="Quantidade")
                 
-                # Garantir ordem visual lógica das etapas
                 ordem_st = {st_nome: i for i, st_nome in enumerate(STATUS_OPCOES)}
                 df_status["ordem"] = df_status["status"].map(ordem_st)
                 df_status = df_status.sort_values(by="ordem")
