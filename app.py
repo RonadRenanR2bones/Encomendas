@@ -365,7 +365,6 @@ if menu == "➕ Encomenda":
         df_exibicao["Preço Base"] = df_exibicao["preco"].apply(lambda x: f"R$ {x:.2f}")
         df_exibicao["Preço Total"] = df_exibicao["preco_total"].apply(lambda x: f"R$ {x:.2f}")
 
-        # Seleção dinâmica de colunas (oculta se totalmente vazia/zerada)
         cols_para_exibir = ["cor_bone", "frase_arte"]
 
         if df_exibicao["cor_linha"].dropna().astype(str).str.strip().ne("").any():
@@ -636,7 +635,6 @@ elif menu == "📊 Tabela Geral":
                 df_lote["Total Item"] = df_lote["total_item"].apply(lambda x: f"R$ {x:.2f}")
                 df_lote["Data"] = df_lote["data_criacao"].apply(lambda x: x.split(" ")[0] if x else "")
                 
-                # Seleção dinâmica de colunas para o lote
                 cols_lote = ["cor_bone", "frase_arte"]
                 
                 if df_lote["cor_linha"].dropna().astype(str).str.strip().ne("").any():
@@ -826,30 +824,38 @@ elif menu == "💰 Financeiro":
                 else:
                     st.caption("Nenhum pagamento registrado para este pedido ainda.")
 
-                st.markdown("##### 🧢 Resumo de Bonés por Produto")
+                # TÍTULO RENOMEADO
+                st.markdown("##### 🧢 Detalhamento")
                 df_itens_lote = df_todos_itens[df_todos_itens["lote_id"] == lote]
                 
                 if not df_itens_lote.empty:
-                    # Contagem dos produtos principais (Básico, Kids, Premium, etc.)
-                    resumo_lista = []
-                    counts_prod = df_itens_lote.groupby("tipo").size()
-                    for prod_nome, qtd in counts_prod.items():
-                        resumo_lista.append({"Produto": prod_nome, "Quantidade": str(qtd)})
-
-                    # Contagem condicional de Estampa Extra
-                    qtd_extra = (df_itens_lote["valor_estampa_extra"] > 0).sum()
-                    if qtd_extra > 0:
-                        resumo_lista.append({"Produto": "Estampa Extra", "Quantidade": str(qtd_extra)})
-
-                    # Contagem condicional de Matriz de Bordado
-                    qtd_matriz = (df_itens_lote["valor_matriz"] > 0).sum()
-                    if qtd_matriz > 0:
-                        resumo_lista.append({"Produto": "Matriz de Bordado", "Quantidade": str(qtd_matriz)})
-
-                    df_resumo_prod = pd.DataFrame(resumo_lista)
+                    col_det1, col_det2 = st.columns(2)
                     
-                    st.dataframe(df_resumo_prod, use_container_width=True, hide_index=True)
-                    
+                    # GRUPO 1: BONÉS
+                    with col_det1:
+                        st.markdown("**Bonés**")
+                        counts_prod = df_itens_lote.groupby("tipo").size().reset_index(name="Quantidade")
+                        counts_prod = counts_prod.rename(columns={"tipo": "Produto"})
+                        counts_prod["Quantidade"] = counts_prod["Quantidade"].astype(str)
+                        st.dataframe(counts_prod, use_container_width=True, hide_index=True)
+
+                    # GRUPO 2: EXTRAS
+                    with col_det2:
+                        extras_lista = []
+                        
+                        qtd_extra = (df_itens_lote["valor_estampa_extra"] > 0).sum()
+                        if qtd_extra > 0:
+                            extras_lista.append({"Produto": "Estampa", "Quantidade": str(qtd_extra)})
+
+                        qtd_matriz = (df_itens_lote["valor_matriz"] > 0).sum()
+                        if qtd_matriz > 0:
+                            extras_lista.append({"Produto": "Matriz de Bordado", "Quantidade": str(qtd_matriz)})
+
+                        if extras_lista:
+                            st.markdown("**Extras**")
+                            df_extras = pd.DataFrame(extras_lista)
+                            st.dataframe(df_extras, use_container_width=True, hide_index=True)
+
                     st.markdown(f"💰 **Valor Total Adiantado:** `R$ {total_pago:.2f}`")
                 else:
                     st.caption("Nenhum item vinculado a este pedido.")
