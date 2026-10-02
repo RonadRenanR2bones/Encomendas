@@ -161,6 +161,16 @@ def modal_buscar_pedido(key_prefix, lista_lotes):
     else:
         st.warning("Nenhum pedido encontrado com este termo.")
 
+# -------------------------------------------------------------
+# MODAL SUSPENSO PARA VISUALIZAR FOTO DE REFERÊNCIA
+# -------------------------------------------------------------
+@st.dialog("🖼️ Foto de Referência da Estampa")
+def modal_visualizar_foto(img_path, nome_arte):
+    if img_path and os.path.exists(img_path):
+        st.image(img_path, use_container_width=True, caption=f"Arte: {nome_arte}")
+    else:
+        st.warning("⚠️ Foto de referência não encontrada ou indisponível.")
+
 init_db()
 
 # Título Principal
@@ -179,21 +189,38 @@ perfil = st.sidebar.selectbox(
 is_admin = False
 
 if perfil == "R2 Bonés":
-    senha_digitada = st.sidebar.text_input("Digite a Senha de ADM:", type="password", key="senha_input_adm")
-    if senha_digitada == ADMIN_PASSWORD_FIXA:
+    if "admin_autenticado" not in st.session_state:
+        st.session_state["admin_autenticado"] = False
+
+    if not st.session_state["admin_autenticado"]:
+        senha_digitada = st.sidebar.text_input("Digite a Senha de ADM:", type="password", key="senha_input_adm")
+        if senha_digitada == ADMIN_PASSWORD_FIXA:
+            st.session_state["admin_autenticado"] = True
+            st.rerun()
+        elif senha_digitada != "":
+            st.sidebar.error("❌ Senha incorreta!")
+    else:
         is_admin = True
         st.sidebar.success("🔒 Acesso ADM Liberado")
-    elif senha_digitada != "":
-        st.sidebar.error("❌ Senha incorreta!")
+else:
+    st.session_state["admin_autenticado"] = False
+
+# NAVEGAÇÃO (Sem o rótulo/texto "Navegação" visível)
+if is_admin:
+    menu_options = ["➕ Encomenda", "📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
+else:
+    menu_options = ["📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
+
+menu = st.sidebar.radio("", menu_options, label_visibility="collapsed")
 
 # -------------------------------------------------------------
-# GESTÃO DE BANCO DE DADOS (VISÍVEL APENAS PARA ADMINISTRADORES)
+# GESTÃO DE BANCO DE DADOS (ABAIXO DA NAVEGAÇÃO - APENAS ADM)
 # -------------------------------------------------------------
 if is_admin:
     st.sidebar.markdown("---")
     st.sidebar.subheader("💾 Gestão do Banco de Dados")
 
-    # Upload para restaurar um banco .db de fora
+    # Upload para restaurar um banco .db
     uploaded_db = st.sidebar.file_uploader("📥 Importar / Restaurar Banco (.db)", type=["db", "sqlite", "sqlite3"], key="uploader_db_sidebar")
 
     if uploaded_db is not None:
@@ -212,15 +239,6 @@ if is_admin:
                 mime="application/x-sqlite3",
                 use_container_width=True
             )
-
-st.sidebar.markdown("---")
-
-if is_admin:
-    menu_options = ["➕ Encomenda", "📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
-else:
-    menu_options = ["📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
-
-menu = st.sidebar.radio("Navegação", menu_options)
 
 # -------------------------------------------------------------
 # 1. TELA DE ENCOMENDA (ADMINISTRADOR / R2 BONÉS)
@@ -253,7 +271,7 @@ if menu == "➕ Encomenda":
                 st.session_state["selected_lote_encomenda"] = nome_lote
             with c_btn:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🔍 Lupa", key="btn_lupa_encomenda", help="Abrir busca suspensa por nome"):
+                if st.button("🔍", key="btn_lupa_encomenda", help="Abrir busca suspensa por nome"):
                     modal_buscar_pedido("encomenda", lotes_existentes)
         else:
             nome_lote_padrao = datetime.now().strftime("%d/%m/%Y")
@@ -448,7 +466,7 @@ elif menu == "📋 Produção":
                 st.session_state["selected_lote_prod"] = lote_filter
             with c_prod_btn:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🔍 Lupa", key="btn_lupa_producao", help="Abrir busca suspensa por nome"):
+                if st.button("🔍", key="btn_lupa_producao", help="Abrir busca suspensa por nome"):
                     modal_buscar_pedido("prod", lotes_disponiveis)
 
         if status_filter:
@@ -461,14 +479,9 @@ elif menu == "📋 Produção":
         for idx, row in df.iterrows():
             with st.container():
                 st.markdown("---")
-                col_img, col_info, col_status = st.columns([1.2, 2, 1])
-                with col_img:
-                    if row["imagem_path"] and os.path.exists(row["imagem_path"]):
-                        st.image(row["imagem_path"], use_container_width=True, caption="Foto de Referência")
-                    else:
-                        st.warning("⚠️ Sem foto de referência cadastrada")
+                col_info, col_status = st.columns([2.5, 1])
+                
                 with col_info:
-                    # Reformatação visual conforme Imagem 1
                     if row["lote_id"]:
                         st.markdown(f"📦 **Pedido:** `{row['lote_id']}`")
                     
@@ -481,8 +494,21 @@ elif menu == "📋 Produção":
                     st.markdown(f"**Arte Estampada:** {arte_fmt}")
                     st.markdown(f"**Cor da Estampa:** {cor_linha_fmt}")
                     st.markdown(f"**Produto:** `{row['tipo']}`")
+                    
+                    # FOTO DE REFERÊNCIA EM BOTÃO POP-UP (IMAGEM 1)
+                    if row["imagem_path"] and os.path.exists(row["imagem_path"]):
+                        c_ref_lbl, c_ref_btn = st.columns([1, 2])
+                        with c_ref_lbl:
+                            st.write("**Foto de Referência:**")
+                        with c_ref_btn:
+                            if st.button("🖼️ Ver Foto", key=f"btn_pop_img_{row['id']}"):
+                                modal_visualizar_foto(row["imagem_path"], row["frase_arte"])
+                    else:
+                        st.markdown("**Foto de Referência:** `Sem foto cadastrada`")
+
                     if row["observacoes"]:
                         st.info(f"📌 **Obs:** {row['observacoes']}")
+                        
                 with col_status:
                     data_so_data = row['data_criacao'].split(" ")[0] if row['data_criacao'] else ""
                     st.write(f"**Data:** {data_so_data}")
@@ -613,7 +639,6 @@ elif menu == "💰 Financeiro":
                     with col_p2:
                         val_sugerido = val_total * 0.5
                         valor_pago_str = st.text_input("Valor Pago (R$)", value=f"{val_sugerido:.2f}".replace(".", ","), help="Sugerido 50% de entrada")
-                        # Restrito apenas a Pix e Cartão de Crédito
                         forma_pag = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito"])
 
                     with col_p3:
