@@ -308,13 +308,8 @@ if menu == "➕ Encomenda":
         with col2:
             tipo = st.selectbox("Produto", ["Básico", "Premium", "Kids", "Estampa Extra", "Outro"])
             preco_str = st.text_input("Preço Unitário (R$)", value="29,00")
-            
-            # Novo campo Estampa Extra (Valor R$) abaixo do Preço Unitário
-            estampa_extra_str = st.text_input("Estampa Extra (R$)", value="0,00", help="Informe o valor adicional para estampa extra (opcional)")
-            
-            # Taxa opcional Matriz de Bordado
-            matriz_str = st.text_input("Taxa Matriz de Bordado (R$)", value="0,00", help="Taxa pontual aplicável quando há intervenção técnica/profissional de programação (opcional)")
-            
+            estampa_extra_str = st.text_input("Estampa Extra (R$)", value="0,00", help="Valor adicional para estampa extra (opcional)")
+            matriz_str = st.text_input("Taxa Matriz de Bordado (R$)", value="0,00", help="Taxa pontual para criação/ajuste técnico de matriz (opcional)")
             observacoes = st.text_input("Observações Específicas", placeholder="Ex: Bordado frontal 12cm, fonte manuscrita")
             
             st.markdown("<br>", unsafe_allow_html=True)
@@ -362,24 +357,44 @@ if menu == "➕ Encomenda":
     st.markdown("---")
     st.subheader(f"📦 Resumo da Produção Pedido '{nome_lote}'")
     conn = sqlite3.connect(DB_NAME)
-    df_lote_atual = pd.read_sql_query("SELECT *, (preco + valor_estampa_extra + valor_matriz) as preco_total FROM pedidos WHERE lote_id = ? ORDER BY id DESC", conn, params=(nome_lote,))
+    df_lote_atual = pd.read_sql_query("SELECT *, (preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as preco_total FROM pedidos WHERE lote_id = ? ORDER BY id DESC", conn, params=(nome_lote,))
     conn.close()
 
     if not df_lote_atual.empty:
         df_exibicao = df_lote_atual.copy()
         df_exibicao["Preço Base"] = df_exibicao["preco"].apply(lambda x: f"R$ {x:.2f}")
-        df_exibicao["Estampa Extra"] = df_exibicao["valor_estampa_extra"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
-        df_exibicao["Matriz Bordado"] = df_exibicao["valor_matriz"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
         df_exibicao["Preço Total"] = df_exibicao["preco_total"].apply(lambda x: f"R$ {x:.2f}")
-        df_exibicao["Cor da Estampa"] = df_exibicao["cor_linha"].apply(lambda x: x if x else "-")
-        df_exibicao["Observações"] = df_exibicao["observacoes"].apply(lambda x: x if x else "-")
-        
-        df_display = df_exibicao.rename(columns={
+
+        # Seleção dinâmica de colunas (oculta se totalmente vazia/zerada)
+        cols_para_exibir = ["cor_bone", "frase_arte"]
+
+        if df_exibicao["cor_linha"].dropna().astype(str).str.strip().ne("").any():
+            cols_para_exibir.append("cor_linha")
+
+        cols_para_exibir.append("tipo")
+        cols_para_exibir.append("Preço Base")
+
+        if (df_exibicao["valor_estampa_extra"] > 0).any():
+            df_exibicao["Estampa Extra"] = df_exibicao["valor_estampa_extra"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
+            cols_para_exibir.append("Estampa Extra")
+
+        if (df_exibicao["valor_matriz"] > 0).any():
+            df_exibicao["Matriz Bordado"] = df_exibicao["valor_matriz"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
+            cols_para_exibir.append("Matriz Bordado")
+
+        cols_para_exibir.extend(["Preço Total", "status"])
+
+        if df_exibicao["observacoes"].dropna().astype(str).str.strip().ne("").any():
+            cols_para_exibir.append("observacoes")
+
+        df_display = df_exibicao[cols_para_exibir].rename(columns={
             "cor_bone": "Cor do Boné",
             "frase_arte": "Arte Estampada",
+            "cor_linha": "Cor da Estampa",
             "tipo": "Produto",
-            "status": "Status"
-        })[["Cor do Boné", "Arte Estampada", "Cor da Estampa", "Produto", "Preço Base", "Estampa Extra", "Matriz Bordado", "Preço Total", "Status", "Observações"]]
+            "status": "Status",
+            "observacoes": "Observações"
+        })
 
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
@@ -617,25 +632,41 @@ elif menu == "📊 Tabela Geral":
             total_valor = df_lote['total_item'].sum()
             
             with st.expander(f"📦 Pedido: {lote} — ({total_qtd} bonés | Total: R$ {total_valor:.2f})", expanded=False):
-                df_lote["preco"] = df_lote["preco"].apply(lambda x: f"R$ {x:.2f}")
-                df_lote["valor_estampa_extra"] = df_lote["valor_estampa_extra"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
-                df_lote["valor_matriz"] = df_lote["valor_matriz"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
-                df_lote["total_item"] = df_lote["total_item"].apply(lambda x: f"R$ {x:.2f}")
-                df_lote["data_criacao"] = df_lote["data_criacao"].apply(lambda x: x.split(" ")[0] if x else "")
+                df_lote["Preço Base"] = df_lote["preco"].apply(lambda x: f"R$ {x:.2f}")
+                df_lote["Total Item"] = df_lote["total_item"].apply(lambda x: f"R$ {x:.2f}")
+                df_lote["Data"] = df_lote["data_criacao"].apply(lambda x: x.split(" ")[0] if x else "")
                 
-                cols_ordem = ["cor_bone", "frase_arte", "cor_linha", "tipo", "preco", "valor_estampa_extra", "valor_matriz", "total_item", "status", "observacoes", "data_criacao"]
-                df_exibicao_lote = df_lote[cols_ordem].rename(columns={
+                # Seleção dinâmica de colunas para o lote
+                cols_lote = ["cor_bone", "frase_arte"]
+                
+                if df_lote["cor_linha"].dropna().astype(str).str.strip().ne("").any():
+                    cols_lote.append("cor_linha")
+                    
+                cols_lote.append("tipo")
+                cols_lote.append("Preço Base")
+                
+                if (df_lote["valor_estampa_extra"] > 0).any():
+                    df_lote["Estampa Extra"] = df_lote["valor_estampa_extra"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
+                    cols_lote.append("Estampa Extra")
+                    
+                if (df_lote["valor_matriz"] > 0).any():
+                    df_lote["Matriz Bordado"] = df_lote["valor_matriz"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
+                    cols_lote.append("Matriz Bordado")
+                    
+                cols_lote.extend(["Total Item", "status"])
+                
+                if df_lote["observacoes"].dropna().astype(str).str.strip().ne("").any():
+                    cols_lote.append("observacoes")
+                    
+                cols_lote.append("Data")
+
+                df_exibicao_lote = df_lote[cols_lote].rename(columns={
                     "cor_bone": "Cor do Boné",
                     "frase_arte": "Arte Estampada",
                     "cor_linha": "Cor da Estampa",
                     "tipo": "Produto",
-                    "preco": "Preço Base",
-                    "valor_estampa_extra": "Estampa Extra",
-                    "valor_matriz": "Matriz Bordado",
-                    "total_item": "Total Item",
                     "status": "Status",
-                    "observacoes": "Observações",
-                    "data_criacao": "Data"
+                    "observacoes": "Observações"
                 })
                 
                 if is_admin:
@@ -703,7 +734,6 @@ elif menu == "💰 Financeiro":
                         st.caption(f"Valor Total do Pedido: **R$ {val_total:.2f}**")
                     
                     with col_p2:
-                        # Campo completamente livre (sem sugestão de 50%)
                         valor_pago_str = st.text_input("Valor Pago (R$)", value="", placeholder="Digite o valor pago")
                         forma_pag = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito"])
 
