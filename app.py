@@ -60,10 +60,15 @@ def get_db_engine():
 
 engine, db_type = get_db_engine()
 
-def get_db_connection():
-    if db_type == "sqlite":
-        return sqlite3.connect(DB_NAME)
-    return engine
+def carregar_dataframe(query, params=None):
+    if db_type == "postgres":
+        with engine.connect() as conn:
+            return pd.read_sql_query(text(query), conn, params=params)
+    else:
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
 
 def init_db():
     if db_type == "postgres":
@@ -175,15 +180,6 @@ def deletar_pagamento(pagamento_id):
         conn.commit()
         conn.close()
 
-def carregar_dataframe(query, params=None):
-    if db_type == "postgres":
-        return pd.read_sql_query(text(query), engine, params=params)
-    else:
-        conn = sqlite3.connect(DB_NAME)
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
-        return df
-
 def clean_currency(val):
     if pd.isna(val) or str(val).strip() in ["-", "", "nan"]:
         return 0.0
@@ -281,7 +277,7 @@ if perfil == "R2 Bonés":
 else:
     st.session_state["admin_autenticado"] = False
 
-# NAVEGAÇÃO (Aba Importação visível APENAS para ADM)
+# NAVEGAÇÃO
 if is_admin:
     menu_options = ["➕ Encomenda", "📥 Importar Excel", "📋 Produção", "📊 Tabela Geral", "💰 Financeiro", "📈 Dashboard ADM"]
 else:
@@ -289,7 +285,7 @@ else:
 
 menu = st.sidebar.radio("", menu_options, label_visibility="collapsed")
 
-# Gestão de Banco na Sidebar (Apenas ADM)
+# Gestão de Banco na Sidebar (Apenas ADM / SQLite)
 if is_admin and db_type == "sqlite":
     st.sidebar.markdown("---")
     st.sidebar.subheader("💾 Gestão do Banco de Dados")
@@ -333,7 +329,6 @@ if menu == "📥 Importar Excel" and is_admin:
         
         for file in uploaded_files:
             nome_arquivo = file.name
-            # Extrai o Lote ID ex: 'Pedido_#1.10-2026.xlsx' -> '#1.10/2026'
             lote_sugerido = nome_arquivo.replace("Pedido_", "").replace(".xlsx", "").replace(".xls", "").replace("-", "/")
             
             try:
@@ -403,7 +398,7 @@ elif menu == "➕ Encomenda" and is_admin:
     st.header("Cadastrar Item na Encomenda")
     st.write("Selecione um lote/pedido existente ou crie um novo para vincular os bonés.")
 
-    df_lotes_db = carregar_dataframe("SELECT DISTINCT lote_id FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' ORDER BY id DESC")
+    df_lotes_db = carregar_dataframe("SELECT DISTINCT lote_id FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != ''")
     lotes_existentes = list(df_lotes_db["lote_id"].unique()) if not df_lotes_db.empty else []
 
     if "selected_lote_encomenda" not in st.session_state and lotes_existentes:
@@ -732,7 +727,7 @@ elif menu == "💰 Financeiro":
     st.header("💰 Controle Financeiro de Pedidos")
     st.write("Acompanhamento de pagamentos por pedido (adiantamentos e quitações).")
 
-    df_pedidos = carregar_dataframe("SELECT lote_id, SUM(preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_pedido FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' GROUP BY lote_id ORDER BY min(id) DESC")
+    df_pedidos = carregar_dataframe("SELECT lote_id, SUM(preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_pedido FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' GROUP BY lote_id")
     df_todos_itens = carregar_dataframe("SELECT lote_id, cor_bone, frase_arte, cor_linha, tipo, preco, COALESCE(valor_estampa_extra, 0) as valor_estampa_extra, COALESCE(valor_matriz, 0) as valor_matriz FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != ''")
     df_pagamentos = carregar_dataframe("SELECT * FROM pagamentos ORDER BY id DESC")
 
