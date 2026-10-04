@@ -1,5 +1,7 @@
 streamlit
 pandas
-pillow
-openpyxl
+sqlalchemy
+psycopg[binary]
 plotly
+openpyxl
+Pillow
