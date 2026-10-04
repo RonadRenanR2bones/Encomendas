@@ -5,3 +5,5 @@ psycopg[binary]
 plotly
 openpyxl
 Pillow
+supabase
+st-theme
