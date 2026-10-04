@@ -540,6 +540,94 @@ elif menu == "➕ Encomenda" and is_admin:
                 st.success("Item excluído com sucesso!")
                 st.rerun()
 
+        # -------------------------------------------------------------
+        # FORMULÁRIO DE ALTERAÇÃO / EDIÇÃO DO ITEM ENCOMENDADO
+        # -------------------------------------------------------------
+        st.markdown("---")
+        st.subheader("✏ Alterar / Editar Informações do Item")
+        
+        dict_itens_edit = {row["id"]: f"ID #{row['id']} - {row['cor_bone']} / {row['frase_arte']}" for _, row in df_lote_atual.iterrows()}
+        id_para_editar = st.selectbox("Selecione o item do pedido para editar:", options=list(dict_itens_edit.keys()), format_func=lambda x: dict_itens_edit[x], key="select_item_edit")
+
+        item_dados = df_lote_atual[df_lote_atual["id"] == id_para_editar].iloc[0]
+
+        with st.form("form_editar_item"):
+            col_e1, col_e2 = st.columns(2)
+            
+            with col_e1:
+                edit_cor_bone = st.text_input("Cor do Boné", value=item_dados["cor_bone"] or "")
+                edit_frase_arte = st.text_area("Arte Estampada", value=item_dados["frase_arte"] or "")
+                edit_cor_linha = st.text_input("Cor da Estampa", value=item_dados["cor_linha"] or "")
+                
+                if item_dados["imagem_path"] and os.path.exists(item_dados["imagem_path"]):
+                    st.image(item_dados["imagem_path"], width=120, caption="Foto de Referência Atual")
+                edit_uploaded_file = st.file_uploader("Substituir Foto / Imagem de Referência (Opcional)", type=["jpg", "jpeg", "png", "webp"], key="file_uploader_edit")
+
+            with col_e2:
+                prod_options = ["Básico", "Premium", "Kids", "Outro"]
+                idx_prod = prod_options.index(item_dados["tipo"]) if item_dados["tipo"] in prod_options else 0
+                edit_tipo = st.selectbox("Produto", prod_options, index=idx_prod)
+                
+                edit_preco_str = st.text_input("Preço Unitário (R$)", value=f"{item_dados['preco']:.2f}".replace(".", ","))
+                edit_estampa_extra_str = st.text_input("Estampa Extra (R$)", value=f"{item_dados['valor_estampa_extra']:.2f}".replace(".", ","))
+                edit_matriz_str = st.text_input("Taxa Matriz de Bordado (R$)", value=f"{item_dados['valor_matriz']:.2f}".replace(".", ","))
+                
+                edit_observacoes = st.text_input("Observações Específicas", value=item_dados["observacoes"] or "")
+                
+                idx_status = STATUS_OPCOES.index(item_dados["status"]) if item_dados["status"] in STATUS_OPCOES else 0
+                edit_status = st.selectbox("Status do Item", STATUS_OPCOES, index=idx_status)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                btn_salvar_edicao = st.form_submit_button("💾 Salvar Alterações", use_container_width=True)
+
+            if btn_salvar_edicao:
+                novo_preco_val = clean_currency(edit_preco_str) or item_dados["preco"]
+                novo_extra_val = clean_currency(edit_estampa_extra_str)
+                nova_matriz_val = clean_currency(edit_matriz_str)
+
+                caminho_foto = item_dados["imagem_path"]
+                if edit_uploaded_file is not None:
+                    if caminho_foto and os.path.exists(caminho_foto):
+                        try:
+                            os.remove(caminho_foto)
+                        except Exception:
+                            pass
+                    
+                    file_ext = edit_uploaded_file.name.split(".")[-1]
+                    filename = f"ref_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.{file_ext}"
+                    caminho_foto = os.path.join(UPLOADS_DIR, filename)
+                    with open(caminho_foto, "wb") as f:
+                        f.write(edit_uploaded_file.getbuffer())
+
+                if db_type == "postgres":
+                    with engine.begin() as conn:
+                        conn.execute(text('''
+                            UPDATE pedidos 
+                            SET cor_bone = :cor_bone, frase_arte = :frase_arte, cor_linha = :cor_linha, 
+                                tipo = :tipo, preco = :preco, valor_estampa_extra = :valor_estampa_extra, 
+                                valor_matriz = :valor_matriz, observacoes = :observacoes, 
+                                imagem_path = :imagem_path, status = :status
+                            WHERE id = :id
+                        '''), {
+                            "cor_bone": edit_cor_bone, "frase_arte": edit_frase_arte, "cor_linha": edit_cor_linha,
+                            "tipo": edit_tipo, "preco": novo_preco_val, "valor_estampa_extra": novo_extra_val,
+                            "valor_matriz": nova_matriz_val, "observacoes": edit_observacoes,
+                            "imagem_path": caminho_foto, "status": edit_status, "id": id_para_editar
+                        })
+                else:
+                    conn = sqlite3.connect(DB_NAME)
+                    c = conn.cursor()
+                    c.execute('''
+                        UPDATE pedidos 
+                        SET cor_bone = ?, frase_arte = ?, cor_linha = ?, tipo = ?, preco = ?, valor_estampa_extra = ?, valor_matriz = ?, observacoes = ?, imagem_path = ?, status = ?
+                        WHERE id = ?
+                    ''', (edit_cor_bone, edit_frase_arte, edit_cor_linha, edit_tipo, novo_preco_val, novo_extra_val, nova_matriz_val, edit_observacoes, caminho_foto, edit_status, id_para_editar))
+                    conn.commit()
+                    conn.close()
+
+                st.success("✅ Informações do item atualizadas com sucesso!")
+                st.rerun()
+
         total_pedido_soma = df_lote_atual['preco_total'].sum()
         st.markdown("---")
         st.write(f"**Total de itens neste pedido:** {len(df_lote_atual)} boné(s) | **Valor Total do Pedido:** R$ {total_pedido_soma:.2f}")
