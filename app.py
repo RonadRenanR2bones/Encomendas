@@ -279,31 +279,19 @@ else:
 
 # NAVEGAÇÃO
 if is_admin:
-    menu_options = ["➕ Encomenda", "📥 Importar Excel", "📋 Produção", "📊 Tabela Geral", "💰 Financeiro", "📈 Dashboard ADM"]
+    menu_options = [
+        "➕ Encomenda", 
+        "📥 Importar Excel", 
+        "📋 Produção", 
+        "📊 Tabela Geral", 
+        "💰 Financeiro", 
+        "📈 Dashboard ADM",
+        "💾 Gestão de Dados"
+    ]
 else:
     menu_options = ["📋 Produção", "📊 Tabela Geral", "💰 Financeiro"]
 
 menu = st.sidebar.radio("", menu_options, label_visibility="collapsed")
-
-# Gestão de Banco na Sidebar (Apenas ADM / SQLite)
-if is_admin and db_type == "sqlite":
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("💾 Gestão do Banco de Dados")
-    uploaded_db = st.sidebar.file_uploader("📥 Importar / Restaurar Banco (.db)", type=["db", "sqlite", "sqlite3"], key="uploader_db_sidebar")
-    if uploaded_db is not None:
-        with open(DB_NAME, "wb") as f:
-            f.write(uploaded_db.getbuffer())
-        st.sidebar.success("✅ Banco atualizado com sucesso!")
-        st.rerun()
-    if os.path.exists(DB_NAME):
-        with open(DB_NAME, "rb") as f_db:
-            st.sidebar.download_button(
-                label="📤 Baixar Backup Atual (.db)",
-                data=f_db,
-                file_name="ordens_producao.db",
-                mime="application/x-sqlite3",
-                use_container_width=True
-            )
 
 STATUS_OPCOES = ["Em Produção", "Concluído", "Entregue / Retirado"]
 
@@ -540,9 +528,7 @@ elif menu == "➕ Encomenda" and is_admin:
                 st.success("Item excluído com sucesso!")
                 st.rerun()
 
-        # -------------------------------------------------------------
         # FORMULÁRIO DE ALTERAÇÃO / EDIÇÃO DO ITEM ENCOMENDADO
-        # -------------------------------------------------------------
         st.markdown("---")
         st.subheader("✏ Alterar / Editar Informações do Item")
         
@@ -1081,3 +1067,68 @@ elif menu == "📈 Dashboard ADM" and is_admin:
                 fig_linha.update_traces(textposition="outside")
                 fig_linha.update_layout(showlegend=False, yaxis_title="Cor da Linha")
                 st.plotly_chart(fig_linha, use_container_width=True)
+
+# -------------------------------------------------------------
+# 6. TELA DE GESTÃO DE DADOS & BACKUP (EXCLUSIVO ADM)
+# -------------------------------------------------------------
+elif menu == "💾 Gestão de Dados" and is_admin:
+    st.header("💾 Gestão de Dados & Backup")
+    st.write("Gerencie o banco de dados, faça downloads de segurança e restaure backups do sistema.")
+
+    col_b1, col_b2 = st.columns(2)
+
+    with col_b1:
+        st.subheader("📌 Status da Conexão")
+        if db_type == "postgres":
+            st.success("🟢 **Conectado ao Supabase (PostgreSQL Nuvem)**")
+            st.caption("Seus dados estão gravados na nuvem e imunes a reinícios do servidor.")
+        else:
+            st.warning("🟠 **Conectado ao Banco Local (SQLite)**")
+            st.caption("Os dados são mantidos no servidor local temporário. Faça downloads periódicos de backup.")
+
+    with col_b2:
+        st.subheader("📥 Exportar Backup Geral em Excel")
+        df_all_pedidos = carregar_dataframe("SELECT * FROM pedidos ORDER BY id DESC")
+        if not df_all_pedidos.empty:
+            excel_bytes, mime_type, ext = gerar_excel_expandido(df_all_pedidos)
+            data_hoje = datetime.now().strftime("%Y_%m_%d")
+            st.download_button(
+                label="📥 Baixar Todos os Pedidos (.xlsx)",
+                data=excel_bytes,
+                file_name=f"Backup_Geral_Pedidos_{data_hoje}.{ext}",
+                mime=mime_type,
+                use_container_width=True
+            )
+        else:
+            st.info("Nenhum pedido cadastrado para exportar.")
+
+    st.markdown("---")
+
+    if db_type == "sqlite":
+        st.subheader("⚙️ Operações de Banco SQLite (.db)")
+        col_sq1, col_sq2 = st.columns(2)
+
+        with col_sq1:
+            st.markdown("##### 📤 Download do Ficheiro de Banco (`.db`)")
+            if os.path.exists(DB_NAME):
+                with open(DB_NAME, "rb") as f_db:
+                    st.download_button(
+                        label="📤 Baixar Arquivo ordens_producao.db",
+                        data=f_db,
+                        file_name="ordens_producao.db",
+                        mime="application/x-sqlite3",
+                        use_container_width=True
+                    )
+
+        with col_sq2:
+            st.markdown("##### 📥 Restaurar Banco de Dados (`.db`)")
+            uploaded_db = st.file_uploader("Carregar arquivo .db para substituir o banco atual", type=["db", "sqlite", "sqlite3"], key="uploader_db_pagina")
+            if uploaded_db is not None:
+                if st.button("🚨 Confirmar Substituição do Banco", type="primary", use_container_width=True):
+                    with open(DB_NAME, "wb") as f:
+                        f.write(uploaded_db.getbuffer())
+                    st.success("✅ Banco de dados restaurado com sucesso!")
+                    st.rerun()
+    else:
+        st.subheader("⚙️ Operações de Banco Supabase")
+        st.info("Seu banco de dados está sincronizado diretamente na nuvem do Supabase. Todos os cadastros e edições são mantidos permanentemente.")
