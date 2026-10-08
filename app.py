@@ -87,8 +87,7 @@ def init_db():
                     imagem_path TEXT,
                     status TEXT,
                     valor_estampa_extra REAL DEFAULT 0.0,
-                    valor_matriz REAL DEFAULT 0.0,
-                    concluido_por TEXT
+                    valor_matriz REAL DEFAULT 0.0
                 );
             '''))
             conn.execute(text('''
@@ -119,8 +118,7 @@ def init_db():
                 imagem_path TEXT,
                 status TEXT,
                 valor_estampa_extra REAL DEFAULT 0.0,
-                valor_matriz REAL DEFAULT 0.0,
-                concluido_por TEXT
+                valor_matriz REAL DEFAULT 0.0
             )
         ''')
         c.execute("PRAGMA table_info(pedidos)")
@@ -129,8 +127,6 @@ def init_db():
             c.execute("ALTER TABLE pedidos ADD COLUMN valor_estampa_extra REAL DEFAULT 0.0")
         if "valor_matriz" not in colunas_pedidos:
             c.execute("ALTER TABLE pedidos ADD COLUMN valor_matriz REAL DEFAULT 0.0")
-        if "concluido_por" not in colunas_pedidos:
-            c.execute("ALTER TABLE pedidos ADD COLUMN concluido_por TEXT")
 
         c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
         c.execute('''
@@ -331,9 +327,6 @@ if menu == "📥 Importar Excel" and is_admin:
                     data_raw = row.get('Data', datetime.now().strftime("%d/%m/%Y"))
                     data_fmt = str(data_raw).split(" ")[0] if pd.notna(data_raw) else datetime.now().strftime("%d/%m/%Y")
                     
-                    status_excel = str(row.get('Status', 'Em Produção')).strip() if pd.notna(row.get('Status')) else 'Em Produção'
-                    concluido_por_excel = perfil if status_excel == 'Concluído' else None
-                    
                     item = {
                         "lote_id": lote_sugerido,
                         "data_criacao": data_fmt,
@@ -344,10 +337,9 @@ if menu == "📥 Importar Excel" and is_admin:
                         "preco": clean_currency(row.get('Preço Base', 29.0)),
                         "valor_estampa_extra": clean_currency(row.get('Estampa Extra', 0.0)),
                         "valor_matriz": clean_currency(row.get('Matriz Bordado', 0.0)),
-                        "status": status_excel,
+                        "status": str(row.get('Status', 'Em Produção')).strip() if pd.notna(row.get('Status')) else 'Em Produção',
                         "observacoes": str(row.get('Observações', '')).strip() if pd.notna(row.get('Observações')) else '',
-                        "imagem_path": "",
-                        "concluido_por": concluido_por_excel
+                        "imagem_path": ""
                     }
                     registos_para_importar.append(item)
             except Exception as e:
@@ -368,8 +360,8 @@ if menu == "📥 Importar Excel" and is_admin:
                     with engine.begin() as conn:
                         for r in registos_para_importar:
                             conn.execute(text('''
-                                INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz, concluido_por)
-                                VALUES (:lote_id, :data_criacao, :cor_bone, :frase_arte, :cor_linha, :tipo, :preco, :observacoes, :imagem_path, :status, :valor_estampa_extra, :valor_matriz, :concluido_por)
+                                INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
+                                VALUES (:lote_id, :data_criacao, :cor_bone, :frase_arte, :cor_linha, :tipo, :preco, :observacoes, :imagem_path, :status, :valor_estampa_extra, :valor_matriz)
                             '''), r)
                             qtd_sucesso += 1
                 else:
@@ -377,9 +369,9 @@ if menu == "📥 Importar Excel" and is_admin:
                     c = conn.cursor()
                     for r in registos_para_importar:
                         c.execute('''
-                            INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz, concluido_por)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (r['lote_id'], r['data_criacao'], r['cor_bone'], r['frase_arte'], r['cor_linha'], r['tipo'], r['preco'], r['observacoes'], r['imagem_path'], r['status'], r['valor_estampa_extra'], r['valor_matriz'], r['concluido_por']))
+                            INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (r['lote_id'], r['data_criacao'], r['cor_bone'], r['frase_arte'], r['cor_linha'], r['tipo'], r['preco'], r['observacoes'], r['imagem_path'], r['status'], r['valor_estampa_extra'], r['valor_matriz']))
                         qtd_sucesso += 1
                     conn.commit()
                     conn.close()
@@ -463,8 +455,8 @@ elif menu == "➕ Encomenda" and is_admin:
                 if db_type == "postgres":
                     with engine.begin() as conn:
                         conn.execute(text('''
-                            INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz, concluido_por)
-                            VALUES (:lote_id, :data_criacao, :cor_bone, :frase_arte, :cor_linha, :tipo, :preco, :observacoes, :imagem_path, 'Em Produção', :valor_estampa_extra, :valor_matriz, NULL)
+                            INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
+                            VALUES (:lote_id, :data_criacao, :cor_bone, :frase_arte, :cor_linha, :tipo, :preco, :observacoes, :imagem_path, 'Em Produção', :valor_estampa_extra, :valor_matriz)
                         '''), {
                             "lote_id": nome_lote, "data_criacao": data_atual, "cor_bone": cor_bone,
                             "frase_arte": frase_arte, "cor_linha": cor_linha, "tipo": tipo,
@@ -475,8 +467,8 @@ elif menu == "➕ Encomenda" and is_admin:
                     conn = sqlite3.connect(DB_NAME)
                     c = conn.cursor()
                     c.execute('''
-                        INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz, concluido_por)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Em Produção', ?, ?, NULL)
+                        INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Em Produção', ?, ?)
                     ''', (nome_lote, data_atual, cor_bone, frase_arte, cor_linha, tipo, preco_val, observacoes, img_path, estampa_extra_val, matriz_val))
                     conn.commit()
                     conn.close()
@@ -593,13 +585,6 @@ elif menu == "➕ Encomenda" and is_admin:
                     with open(caminho_foto, "wb") as f:
                         f.write(edit_uploaded_file.getbuffer())
 
-                concluido_por_val = item_dados.get("concluido_por")
-                if edit_status == "Concluído":
-                    if item_dados["status"] != "Concluído" or not concluido_por_val:
-                        concluido_por_val = perfil
-                else:
-                    concluido_por_val = None
-
                 if db_type == "postgres":
                     with engine.begin() as conn:
                         conn.execute(text('''
@@ -607,22 +592,22 @@ elif menu == "➕ Encomenda" and is_admin:
                             SET cor_bone = :cor_bone, frase_arte = :frase_arte, cor_linha = :cor_linha, 
                                 tipo = :tipo, preco = :preco, valor_estampa_extra = :valor_estampa_extra, 
                                 valor_matriz = :valor_matriz, observacoes = :observacoes, 
-                                imagem_path = :imagem_path, status = :status, concluido_por = :concluido_por
+                                imagem_path = :imagem_path, status = :status
                             WHERE id = :id
                         '''), {
                             "cor_bone": edit_cor_bone, "frase_arte": edit_frase_arte, "cor_linha": edit_cor_linha,
                             "tipo": edit_tipo, "preco": novo_preco_val, "valor_estampa_extra": novo_extra_val,
                             "valor_matriz": nova_matriz_val, "observacoes": edit_observacoes,
-                            "imagem_path": caminho_foto, "status": edit_status, "concluido_por": concluido_por_val, "id": id_para_editar
+                            "imagem_path": caminho_foto, "status": edit_status, "id": id_para_editar
                         })
                 else:
                     conn = sqlite3.connect(DB_NAME)
                     c = conn.cursor()
                     c.execute('''
                         UPDATE pedidos 
-                        SET cor_bone = ?, frase_arte = ?, cor_linha = ?, tipo = ?, preco = ?, valor_estampa_extra = ?, valor_matriz = ?, observacoes = ?, imagem_path = ?, status = ?, concluido_por = ?
+                        SET cor_bone = ?, frase_arte = ?, cor_linha = ?, tipo = ?, preco = ?, valor_estampa_extra = ?, valor_matriz = ?, observacoes = ?, imagem_path = ?, status = ?
                         WHERE id = ?
-                    ''', (edit_cor_bone, edit_frase_arte, edit_cor_linha, edit_tipo, novo_preco_val, novo_extra_val, nova_matriz_val, edit_observacoes, caminho_foto, edit_status, concluido_por_val, id_para_editar))
+                    ''', (edit_cor_bone, edit_frase_arte, edit_cor_linha, edit_tipo, novo_preco_val, novo_extra_val, nova_matriz_val, edit_observacoes, caminho_foto, edit_status, id_para_editar))
                     conn.commit()
                     conn.close()
 
@@ -666,9 +651,7 @@ elif menu == "📋 Produção":
                     modal_buscar_pedido("prod", lotes_disponiveis)
 
         with col_f2:
-            outros_status = [s for s in STATUS_OPCOES if s != "Em Produção"]
-            status_manuais_selecionados = st.multiselect("Filtrar por Status (Adicionais)", options=outros_status, default=["Concluído"])
-            status_filter = ["Em Produção"] + status_manuais_selecionados
+            status_filter = st.multiselect("Filtrar por Status", options=STATUS_OPCOES, default=["Em Produção", "Concluído"])
 
         if status_filter:
             df = df[df["status"].isin(status_filter)]
@@ -712,25 +695,17 @@ elif menu == "📋 Produção":
                     data_so_data = str(row['data_criacao']).split(" ")[0] if row['data_criacao'] else ""
                     st.write(f"**Data:** {data_so_data}")
                     st.markdown(f"**Status Atual:** **{row['status']}**")
-                    if row['status'] == 'Concluído' and row.get('concluido_por'):
-                        st.caption(f"Concluído por: **{row['concluido_por']}**")
                     
                     idx_st = STATUS_OPCOES.index(row["status"]) if row["status"] in STATUS_OPCOES else 0
                     novo_status = st.selectbox("Atualizar Status", STATUS_OPCOES, index=idx_st, key=f"status_{row['id']}")
                     if novo_status != row["status"]:
-                        concluido_por_val = row.get('concluido_por')
-                        if novo_status == "Concluído":
-                            concluido_por_val = perfil
-                        elif novo_status != "Concluído":
-                            concluido_por_val = None
-
                         if db_type == "postgres":
                             with engine.begin() as conn:
-                                conn.execute(text("UPDATE pedidos SET status = :status, concluido_por = :concluido_por WHERE id = :id"), {"status": novo_status, "concluido_por": concluido_por_val, "id": row['id']})
+                                conn.execute(text("UPDATE pedidos SET status = :status WHERE id = :id"), {"status": novo_status, "id": row['id']})
                         else:
                             conn = sqlite3.connect(DB_NAME)
                             c = conn.cursor()
-                            c.execute("UPDATE pedidos SET status = ?, concluido_por = ? WHERE id = ?", (novo_status, concluido_por_val, row['id']))
+                            c.execute("UPDATE pedidos SET status = ? WHERE id = ?", (novo_status, row['id']))
                             conn.commit()
                             conn.close()
                         st.rerun()
@@ -747,14 +722,13 @@ elif menu == "📋 Produção":
 # -------------------------------------------------------------
 elif menu == "📊 Tabela Geral":
     st.header("📊 Tabela Geral de Pedidos")
-    df = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes, concluido_por FROM pedidos ORDER BY id DESC")
+    df = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos ORDER BY id DESC")
 
     if df.empty:
         st.info("Nenhum pedido cadastrado.")
     else:
         df['lote_id'] = df['lote_id'].fillna('Sem Lote Definido')
         df['total_item'] = df['preco'] + df['valor_estampa_extra'].fillna(0) + df['valor_matriz'].fillna(0)
-        df['concluido_por'] = df['concluido_por'].fillna('-')
         lotes_unicos = df['lote_id'].unique()
 
         for lote in lotes_unicos:
@@ -780,7 +754,7 @@ elif menu == "📊 Tabela Geral":
                     df_lote["Matriz Bordado"] = df_lote["valor_matriz"].apply(lambda x: f"R$ {x:.2f}" if x > 0 else "-")
                     cols_lote.append("Matriz Bordado")
                     
-                cols_lote.extend(["Total Item", "status", "concluido_por"])
+                cols_lote.extend(["Total Item", "status"])
                 if df_lote["observacoes"].dropna().astype(str).str.strip().ne("").any():
                     cols_lote.append("observacoes")
                 cols_lote.append("Data")
@@ -791,7 +765,6 @@ elif menu == "📊 Tabela Geral":
                     "cor_linha": "Cor da Estampa",
                     "tipo": "Produto",
                     "status": "Status",
-                    "concluido_por": "Concluído por",
                     "observacoes": "Observações"
                 })
                 
