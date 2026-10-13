@@ -15,8 +15,13 @@ st.set_page_config(
     layout="wide"
 )
 
-# Senha fixa para o ambiente de Administração
-ADMIN_PASSWORD_FIXA = "26210837"
+# Senhas fixas para os perfis
+SENHAS_PERFIS = {
+    "Ateliê Saara 1": "F307H3FZ",
+    "Ateliê Copa": "4R16W480",
+    "Ateliê Saara 2": "UA2C1VR5",
+    "R2 Bonés": "26210837"
+}
 
 # Estilo CSS customizado
 st.markdown('''
@@ -256,26 +261,32 @@ init_db()
 # Título Principal
 st.title("🧢 R² BONÉS - Controle de Pedidos")
 
-# Controle de Acesso ADM
+# Controle de Acesso com Senha Obrigatória para Todos os Perfis
 st.sidebar.header("👤 Perfil de Acesso")
-perfil = st.sidebar.selectbox("Acessar como:", ["Ateliê", "R2 Bonés"])
+perfis_disponiveis = ["Ateliê Saara 1", "Ateliê Copa", "Ateliê Saara 2", "R2 Bonés"]
+perfil = st.sidebar.selectbox("Acessar como:", perfis_disponiveis)
 
-is_admin = False
-if perfil == "R2 Bonés":
-    if "admin_autenticado" not in st.session_state:
-        st.session_state["admin_autenticado"] = False
-    if not st.session_state["admin_autenticado"]:
-        senha_digitada = st.sidebar.text_input("Digite a Senha de ADM:", type="password", key="senha_input_adm")
-        if senha_digitada == ADMIN_PASSWORD_FIXA:
-            st.session_state["admin_autenticado"] = True
+# Chave de controle de sessão por perfil para gerenciar o login
+session_key_auth = f"autenticado_{perfil}"
+if session_key_auth not in st.session_state:
+    st.session_state[session_key_auth] = False
+
+# Se o perfil mudou ou não está autenticado, solicita a senha obrigatória
+if not st.session_state[session_key_auth]:
+    senha_digitada = st.sidebar.text_input(f"Digite a Senha para [{perfil}]:", type="password", key=f"senha_input_{perfil}")
+    if senha_digitada:
+        if senha_digitada == SENHAS_PERFIS.get(perfil, ""):
+            st.session_state[session_key_auth] = True
             st.rerun()
-        elif senha_digitada != "":
+        else:
             st.sidebar.error("❌ Senha incorreta!")
-    else:
-        is_admin = True
-        st.sidebar.success("🔒 Acesso ADM Liberado")
+    # Para a execução até que o usuário realize o login com sucesso
+    st.stop()
 else:
-    st.session_state["admin_autenticado"] = False
+    # Senha ocultada após o login bem-sucedido (botão/campo de senha removido da exibição e exibido status de sucesso)
+    st.sidebar.success(f"🔒 Acesso [{perfil}] Liberado")
+
+is_admin = (perfil == "R2 Bonés")
 
 # NAVEGAÇÃO
 if is_admin:
