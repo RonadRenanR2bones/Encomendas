@@ -82,6 +82,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS pedidos (
                     id SERIAL PRIMARY KEY,
                     lote_id TEXT,
+                    atelier_nome TEXT DEFAULT 'R2 Bonés',
                     data_criacao TEXT,
                     cor_bone TEXT,
                     frase_arte TEXT,
@@ -99,6 +100,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS pagamentos (
                     id SERIAL PRIMARY KEY,
                     lote_id TEXT,
+                    atelier_nome TEXT DEFAULT 'R2 Bonés',
                     data_pagamento TEXT,
                     valor_pago REAL,
                     forma_pagamento TEXT,
@@ -106,6 +108,15 @@ def init_db():
                     comprovante_path TEXT
                 );
             '''))
+            # Garantir coluna atelier_nome se tabela já existia sem ela
+            try:
+                conn.execute(text("ALTER TABLE pedidos ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE pagamentos ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'"))
+            except Exception:
+                pass
     else:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -113,6 +124,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS pedidos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 lote_id TEXT,
+                atelier_nome TEXT DEFAULT 'R2 Bonés',
                 data_criacao TEXT,
                 cor_bone TEXT,
                 frase_arte TEXT,
@@ -132,12 +144,15 @@ def init_db():
             c.execute("ALTER TABLE pedidos ADD COLUMN valor_estampa_extra REAL DEFAULT 0.0")
         if "valor_matriz" not in colunas_pedidos:
             c.execute("ALTER TABLE pedidos ADD COLUMN valor_matriz REAL DEFAULT 0.0")
+        if "atelier_nome" not in colunas_pedidos:
+            c.execute("ALTER TABLE pedidos ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'")
 
         c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
         c.execute('''
             CREATE TABLE IF NOT EXISTS pagamentos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 lote_id TEXT,
+                atelier_nome TEXT DEFAULT 'R2 Bonés',
                 data_pagamento TEXT,
                 valor_pago REAL,
                 forma_pagamento TEXT,
@@ -145,6 +160,11 @@ def init_db():
                 comprovante_path TEXT
             )
         ''')
+        c.execute("PRAGMA table_info(pagamentos)")
+        colunas_pag = [column[1] for column in c.fetchall()]
+        if "atelier_nome" not in colunas_pag:
+            c.execute("ALTER TABLE pagamentos ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'")
+
         c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
         conn.commit()
         conn.close()
@@ -280,10 +300,8 @@ if not st.session_state[session_key_auth]:
             st.rerun()
         else:
             st.sidebar.error("❌ Senha incorreta!")
-    # Para a execução até que o usuário realize o login com sucesso
     st.stop()
 else:
-    # Senha ocultada após o login bem-sucedido (botão/campo de senha removido da exibição e exibido status de sucesso)
     st.sidebar.success(f"🔒 Acesso [{perfil}] Liberado")
 
 is_admin = (perfil == "R2 Bonés")
@@ -311,7 +329,9 @@ STATUS_OPCOES = ["Em Produção", "Concluído", "Entregue / Retirado"]
 # -------------------------------------------------------------
 if menu == "📥 Importar Excel" and is_admin:
     st.header("📥 Importar Pedidos de Ficheiros Excel (.xlsx)")
-    st.write("Selecione um ou vários ficheiros Excel de pedidos para importar todos os itens automaticamente para o sistema.")
+    st.write("Selecione um ateliê de destino e carregue os ficheiros Excel correspondentes.")
+
+    atelier_destino_imp = st.selectbox("Ateliê Responsável pelos Pedidos:", ["Ateliê Saara 1", "Ateliê Copa", "Ateliê Saara 2", "R2 Bonés"])
 
     uploaded_files = st.file_uploader(
         "Carregar Ficheiros de Pedidos (.xlsx)", 
@@ -340,6 +360,7 @@ if menu == "📥 Importar Excel" and is_admin:
                     
                     item = {
                         "lote_id": lote_sugerido,
+                        "atelier_nome": atelier_destino_imp,
                         "data_criacao": data_fmt,
                         "cor_bone": str(row.get('Cor do Boné', '')).strip() if pd.notna(row.get('Cor do Boné')) else '',
                         "frase_arte": str(row.get('Arte Estampada', '')).strip() if pd.notna(row.get('Arte Estampada')) else '',
@@ -359,7 +380,7 @@ if menu == "📥 Importar Excel" and is_admin:
         if registos_para_importar:
             df_preview = pd.DataFrame(registos_para_importar)
             st.dataframe(
-                df_preview[["lote_id", "data_criacao", "cor_bone", "frase_arte", "cor_linha", "tipo", "preco", "valor_estampa_extra", "valor_matriz", "status"]], 
+                df_preview[["atelier_nome", "lote_id", "data_criacao", "cor_bone", "frase_arte", "cor_linha", "tipo", "preco", "valor_estampa_extra", "valor_matriz", "status"]], 
                 use_container_width=True, 
                 hide_index=True
             )
@@ -371,8 +392,8 @@ if menu == "📥 Importar Excel" and is_admin:
                     with engine.begin() as conn:
                         for r in registos_para_importar:
                             conn.execute(text('''
-                                INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
-                                VALUES (:lote_id, :data_criacao, :cor_bone, :frase_arte, :cor_linha, :tipo, :preco, :observacoes, :imagem_path, :status, :valor_estampa_extra, :valor_matriz)
+                                INSERT INTO pedidos (lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
+                                VALUES (:lote_id, :atelier_nome, :data_criacao, :cor_bone, :frase_arte, :cor_linha, :tipo, :preco, :observacoes, :imagem_path, :status, :valor_estampa_extra, :valor_matriz)
                             '''), r)
                             qtd_sucesso += 1
                 else:
@@ -380,24 +401,26 @@ if menu == "📥 Importar Excel" and is_admin:
                     c = conn.cursor()
                     for r in registos_para_importar:
                         c.execute('''
-                            INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (r['lote_id'], r['data_criacao'], r['cor_bone'], r['frase_arte'], r['cor_linha'], r['tipo'], r['preco'], r['observacoes'], r['imagem_path'], r['status'], r['valor_estampa_extra'], r['valor_matriz']))
+                            INSERT INTO pedidos (lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (r['lote_id'], r['atelier_nome'], r['data_criacao'], r['cor_bone'], r['frase_arte'], r['cor_linha'], r['tipo'], r['preco'], r['observacoes'], r['imagem_path'], r['status'], r['valor_estampa_extra'], r['valor_matriz']))
                         qtd_sucesso += 1
                     conn.commit()
                     conn.close()
                 
                 st.balloons()
-                st.success(f"🎉 Importação concluída com sucesso! {qtd_sucesso} bonés foram cadastrados no sistema.")
+                st.success(f"🎉 Importação concluída com sucesso! {qtd_sucesso} bonés foram cadastrados para o ateliê '{atelier_destino_imp}'.")
 
 # -------------------------------------------------------------
 # 1. TELA DE ENCOMENDA (ADMINISTRADOR / R2 BONÉS)
 # -------------------------------------------------------------
 elif menu == "➕ Encomenda" and is_admin:
     st.header("Cadastrar Item na Encomenda")
-    st.write("Selecione um lote/pedido existente ou crie um novo para vincular os bonés.")
+    st.write("Selecione o Ateliê responsável, escolha um lote/pedido existente ou crie um novo para vincular os bonés.")
 
-    df_lotes_db = carregar_dataframe("SELECT DISTINCT lote_id FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != ''")
+    atelier_selecionado_enc = st.selectbox("Ateliê Responsável:", ["Ateliê Saara 1", "Ateliê Copa", "Ateliê Saara 2", "R2 Bonés"])
+
+    df_lotes_db = carregar_dataframe("SELECT DISTINCT lote_id FROM pedidos WHERE atelier_nome = :at AND lote_id IS NOT NULL AND lote_id != ''", params={"at": atelier_selecionado_enc} if db_type=="postgres" else (atelier_selecionado_enc,))
     lotes_existentes = list(df_lotes_db["lote_id"].unique()) if not df_lotes_db.empty else []
 
     if "selected_lote_encomenda" not in st.session_state and lotes_existentes:
@@ -424,7 +447,7 @@ elif menu == "➕ Encomenda" and is_admin:
             nome_lote = st.text_input("Nome do Novo Pedido:", value=nome_lote_padrao, help="Ex: 01/10/2026, Pedido Feirarte")
 
     with col_l2:
-        st.info(f"📍 **Pedido Selecionado:** `{nome_lote}`")
+        st.info(f"📍 **Ateliê:** `{atelier_selecionado_enc}` | **Pedido:** `{nome_lote}`")
 
     st.markdown("---")
     st.subheader("Detalhes do Boné Individual")
@@ -466,10 +489,10 @@ elif menu == "➕ Encomenda" and is_admin:
                 if db_type == "postgres":
                     with engine.begin() as conn:
                         conn.execute(text('''
-                            INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
-                            VALUES (:lote_id, :data_criacao, :cor_bone, :frase_arte, :cor_linha, :tipo, :preco, :observacoes, :imagem_path, 'Em Produção', :valor_estampa_extra, :valor_matriz)
+                            INSERT INTO pedidos (lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
+                            VALUES (:lote_id, :atelier_nome, :data_criacao, :cor_bone, :frase_arte, :cor_linha, :tipo, :preco, :observacoes, :imagem_path, 'Em Produção', :valor_estampa_extra, :valor_matriz)
                         '''), {
-                            "lote_id": nome_lote, "data_criacao": data_atual, "cor_bone": cor_bone,
+                            "lote_id": nome_lote, "atelier_nome": atelier_selecionado_enc, "data_criacao": data_atual, "cor_bone": cor_bone,
                             "frase_arte": frase_arte, "cor_linha": cor_linha, "tipo": tipo,
                             "preco": preco_val, "observacoes": observacoes, "imagem_path": img_path,
                             "valor_estampa_extra": estampa_extra_val, "valor_matriz": matriz_val
@@ -478,22 +501,22 @@ elif menu == "➕ Encomenda" and is_admin:
                     conn = sqlite3.connect(DB_NAME)
                     c = conn.cursor()
                     c.execute('''
-                        INSERT INTO pedidos (lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Em Produção', ?, ?)
-                    ''', (nome_lote, data_atual, cor_bone, frase_arte, cor_linha, tipo, preco_val, observacoes, img_path, estampa_extra_val, matriz_val))
+                        INSERT INTO pedidos (lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, observacoes, imagem_path, status, valor_estampa_extra, valor_matriz)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Em Produção', ?, ?)
+                    ''', (nome_lote, atelier_selecionado_enc, data_atual, cor_bone, frase_arte, cor_linha, tipo, preco_val, observacoes, img_path, estampa_extra_val, matriz_val))
                     conn.commit()
                     conn.close()
 
-                st.success(f"✅ Boné '{frase_arte}' adicionado com sucesso ao pedido '{nome_lote}'!")
+                st.success(f"✅ Boné '{frase_arte}' adicionado com sucesso ao pedido '{nome_lote}' ({atelier_selecionado_enc})!")
                 st.rerun()
 
     st.markdown("---")
-    st.subheader(f"📦 Resumo da Produção Pedido '{nome_lote}'")
+    st.subheader(f"📦 Resumo da Produção Pedido '{nome_lote}' ({atelier_selecionado_enc})")
     
     if db_type == "postgres":
-        df_lote_atual = carregar_dataframe("SELECT *, (preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as preco_total FROM pedidos WHERE lote_id = :lote ORDER BY id DESC", params={"lote": nome_lote})
+        df_lote_atual = carregar_dataframe("SELECT *, (preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as preco_total FROM pedidos WHERE lote_id = :lote AND atelier_nome = :at ORDER BY id DESC", params={"lote": nome_lote, "at": atelier_selecionado_enc})
     else:
-        df_lote_atual = carregar_dataframe("SELECT *, (preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as preco_total FROM pedidos WHERE lote_id = ? ORDER BY id DESC", params=(nome_lote,))
+        df_lote_atual = carregar_dataframe("SELECT *, (preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as preco_total FROM pedidos WHERE lote_id = ? AND atelier_nome = ? ORDER BY id DESC", params=(nome_lote, atelier_selecionado_enc))
 
     if not df_lote_atual.empty:
         df_exibicao = df_lote_atual.copy()
@@ -634,7 +657,26 @@ elif menu == "➕ Encomenda" and is_admin:
 # -------------------------------------------------------------
 elif menu == "📋 Produção":
     st.header("📋 Produção")
-    df = carregar_dataframe("SELECT * FROM pedidos ORDER BY id DESC")
+
+    # FILTRAGEM DE ATELIÊ: Se ADM, pode escolher ver todos ou filtrar por Ateliê. Se for Ateliê, vê estritamente o seu.
+    if is_admin:
+        col_at_sel1, col_at_sel2 = st.columns(2)
+        with col_at_sel1:
+            atelier_filtro_adm = st.selectbox("Filtrar por Ateliê:", ["Todos os Ateliês", "Ateliê Saara 1", "Ateliê Copa", "Ateliê Saara 2", "R2 Bonés"])
+        
+        if atelier_filtro_adm == "Todos os Ateliês":
+            df = carregar_dataframe("SELECT * FROM pedidos ORDER BY id DESC")
+        else:
+            if db_type == "postgres":
+                df = carregar_dataframe("SELECT * FROM pedidos WHERE atelier_nome = :at ORDER BY id DESC", params={"at": atelier_filtro_adm})
+            else:
+                df = carregar_dataframe("SELECT * FROM pedidos WHERE atelier_nome = ? ORDER BY id DESC", params=(atelier_filtro_adm,))
+    else:
+        # Ateliês só veem os seus próprios pedidos
+        if db_type == "postgres":
+            df = carregar_dataframe("SELECT * FROM pedidos WHERE atelier_nome = :at ORDER BY id DESC", params={"at": perfil})
+        else:
+            df = carregar_dataframe("SELECT * FROM pedidos WHERE atelier_nome = ? ORDER BY id DESC", params=(perfil,))
 
     if df.empty:
         st.info("Nenhum pedido cadastrado até o momento.")
@@ -677,6 +719,8 @@ elif menu == "📋 Produção":
                 col_info, col_status = st.columns([2.5, 1])
                 
                 with col_info:
+                    if is_admin:
+                        st.markdown(f"🏷️ **Ateliê:** `{row.get('atelier_nome', 'R2 Bonés')}`")
                     if row["lote_id"]:
                         st.markdown(f"📦 **Pedido:** `{row['lote_id']}`")
                     st.markdown(f"**Cor do Boné:** `{row['cor_bone'] or '-'}`")
@@ -733,21 +777,49 @@ elif menu == "📋 Produção":
 # -------------------------------------------------------------
 elif menu == "📊 Tabela Geral":
     st.header("📊 Tabela Geral de Pedidos")
-    df = carregar_dataframe("SELECT id, lote_id, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos ORDER BY id DESC")
+
+    if is_admin:
+        col_at_tg1, col_at_tg2 = st.columns(2)
+        with col_at_tg1:
+            atelier_tg_filtro = st.selectbox("Visualizar por Ateliê:", ["Todos os Ateliês", "Ateliê Saara 1", "Ateliê Copa", "Ateliê Saara 2", "R2 Bonés"], key="sel_atelier_tg")
+        
+        if atelier_tg_filtro == "Todos os Ateliês":
+            df = carregar_dataframe("SELECT id, lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos ORDER BY id DESC")
+        else:
+            if db_type == "postgres":
+                df = carregar_dataframe("SELECT id, lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos WHERE atelier_nome = :at ORDER BY id DESC", params={"at": atelier_tg_filtro})
+            else:
+                df = carregar_dataframe("SELECT id, lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos WHERE atelier_nome = ? ORDER BY id DESC", params=(atelier_tg_filtro,))
+    else:
+        if db_type == "postgres":
+            df = carregar_dataframe("SELECT id, lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos WHERE atelier_nome = :at ORDER BY id DESC", params={"at": perfil})
+        else:
+            df = carregar_dataframe("SELECT id, lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos WHERE atelier_nome = ? ORDER BY id DESC", params=(perfil,))
 
     if df.empty:
         st.info("Nenhum pedido cadastrado.")
     else:
         df['lote_id'] = df['lote_id'].fillna('Sem Lote Definido')
         df['total_item'] = df['preco'] + df['valor_estampa_extra'].fillna(0) + df['valor_matriz'].fillna(0)
-        lotes_unicos = df['lote_id'].unique()
+        
+        # Agrupar por atelier e lote para exibição limpa
+        if is_admin and ("Todos" in locals().get('atelier_tg_filtro', 'Todos') or atelier_tg_filtro == "Todos os Ateliês"):
+            grupos_lotes = df[['atelier_nome', 'lote_id']].drop_duplicates().values
+        else:
+            at_atual = atelier_tg_filtro if is_admin else perfil
+            grupos_lotes = [(at_atual, l) for l in df['lote_id'].unique()]
 
-        for lote in lotes_unicos:
-            df_lote = df[df['lote_id'] == lote].copy()
+        for atelier_item, lote in grupos_lotes:
+            df_lote = df[(df['lote_id'] == lote) & (df['atelier_nome'] == atelier_item)].copy()
+            if df_lote.empty:
+                continue
+            
             total_qtd = len(df_lote)
             total_valor = df_lote['total_item'].sum()
             
-            with st.expander(f"📦 Pedido: {lote} — ({total_qtd} bonés | Total: R$ {total_valor:.2f})", expanded=False):
+            titulo_expander = f"📦 Ateliê: {atelier_item} | Pedido: {lote} — ({total_qtd} bonés | Total: R$ {total_valor:.2f})"
+            
+            with st.expander(titulo_expander, expanded=False):
                 df_lote["Preço Base"] = df_lote["preco"].apply(lambda x: f"R$ {x:.2f}")
                 df_lote["Total Item"] = df_lote["total_item"].apply(lambda x: f"R$ {x:.2f}")
                 df_lote["Data"] = df_lote["data_criacao"].apply(lambda x: str(x).split(" ")[0] if x else "")
@@ -786,8 +858,8 @@ elif menu == "📊 Tabela Geral":
                     with col_d:
                         st.markdown("##### 🗑 Excluir Item")
                         dict_itens_tbl = {row["id"]: f"{row['cor_bone']} - {row['frase_arte']}" for _, row in df_lote.iterrows()}
-                        id_del = st.selectbox("Item:", options=list(dict_itens_tbl.keys()), format_func=lambda x: dict_itens_tbl[x], key=f"sel_tbl_{lote}")
-                        if st.button("❌ Excluir", key=f"btn_del_tbl_{lote}"):
+                        id_del = st.selectbox("Item:", options=list(dict_itens_tbl.keys()), format_func=lambda x: dict_itens_tbl[x], key=f"sel_tbl_{atelier_item}_{lote}")
+                        if st.button("❌ Excluir", key=f"btn_del_tbl_{atelier_item}_{lote}"):
                             deletar_item(id_del)
                             st.success("Item excluído!")
                             st.rerun()
@@ -797,12 +869,13 @@ elif menu == "📊 Tabela Geral":
                 st.markdown("<br>", unsafe_allow_html=True)
                 excel_lote_bytes, mime_lote, ext_lote = gerar_excel_expandido(df_exibicao_lote)
                 lote_filename = str(lote).replace('/', '-').replace(' ', '_')
+                atelier_filename = str(atelier_item).replace(' ', '_')
                 st.download_button(
                     label=f"📥 Exportar Pedido '{lote}' em Excel",
                     data=excel_lote_bytes,
-                    file_name=f"Pedido_{lote_filename}.{ext_lote}",
+                    file_name=f"{atelier_filename}_Pedido_{lote_filename}.{ext_lote}",
                     mime=mime_lote,
-                    key=f"btn_exp_lote_{lote}"
+                    key=f"btn_exp_lote_{atelier_item}_{lote}"
                 )
 
 # -------------------------------------------------------------
@@ -812,29 +885,51 @@ elif menu == "💰 Financeiro":
     st.header("💰 Controle Financeiro de Pedidos")
     st.write("Acompanhamento de pagamentos por pedido (adiantamentos e quitações).")
 
-    df_pedidos = carregar_dataframe("SELECT lote_id, SUM(preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_pedido FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' GROUP BY lote_id")
-    df_todos_itens = carregar_dataframe("SELECT lote_id, cor_bone, frase_arte, cor_linha, tipo, preco, COALESCE(valor_estampa_extra, 0) as valor_estampa_extra, COALESCE(valor_matriz, 0) as valor_matriz FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != ''")
-    df_pagamentos = carregar_dataframe("SELECT * FROM pagamentos ORDER BY id DESC")
+    # Filtrar dados financeiros conforme o perfil de acesso
+    if is_admin:
+        col_fin_at1, col_fin_at2 = st.columns(2)
+        with col_fin_at1:
+            atelier_fin_filtro = st.selectbox("Visualizar Financeiro por Ateliê:", ["Todos os Ateliês", "Ateliê Saara 1", "Ateliê Copa", "Ateliê Saara 2", "R2 Bonés"], key="sel_atelier_fin")
+        
+        if atelier_fin_filtro == "Todos os Ateliês":
+            df_pedidos = carregar_dataframe("SELECT atelier_nome, lote_id, SUM(preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_pedido FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != '' GROUP BY atelier_nome, lote_id")
+            df_todos_itens = carregar_dataframe("SELECT atelier_nome, lote_id, cor_bone, frase_arte, cor_linha, tipo, preco, COALESCE(valor_estampa_extra, 0) as valor_estampa_extra, COALESCE(valor_matriz, 0) as valor_matriz FROM pedidos WHERE lote_id IS NOT NULL AND lote_id != ''")
+            df_pagamentos = carregar_dataframe("SELECT * FROM pagamentos ORDER BY id DESC")
+        else:
+            if db_type == "postgres":
+                df_pedidos = carregar_dataframe("SELECT atelier_nome, lote_id, SUM(preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_pedido FROM pedidos WHERE atelier_nome = :at AND lote_id IS NOT NULL AND lote_id != '' GROUP BY atelier_nome, lote_id", params={"at": atelier_fin_filtro})
+                df_todos_itens = carregar_dataframe("SELECT atelier_nome, lote_id, cor_bone, frase_arte, cor_linha, tipo, preco, COALESCE(valor_estampa_extra, 0) as valor_estampa_extra, COALESCE(valor_matriz, 0) as valor_matriz FROM pedidos WHERE atelier_nome = :at AND lote_id IS NOT NULL AND lote_id != ''", params={"at": atelier_fin_filtro})
+                df_pagamentos = carregar_dataframe("SELECT * FROM pagamentos WHERE atelier_nome = :at ORDER BY id DESC", params={"at": atelier_fin_filtro})
+            else:
+                df_pedidos = carregar_dataframe("SELECT atelier_nome, lote_id, SUM(preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_pedido FROM pedidos WHERE atelier_nome = ? AND lote_id IS NOT NULL AND lote_id != '' GROUP BY atelier_nome, lote_id", params=(atelier_fin_filtro,))
+                df_todos_itens = carregar_dataframe("SELECT atelier_nome, lote_id, cor_bone, frase_arte, cor_linha, tipo, preco, COALESCE(valor_estampa_extra, 0) as valor_estampa_extra, COALESCE(valor_matriz, 0) as valor_matriz FROM pedidos WHERE atelier_nome = ? AND lote_id IS NOT NULL AND lote_id != ''", params=(atelier_fin_filtro,))
+                df_pagamentos = carregar_dataframe("SELECT * FROM pagamentos WHERE atelier_nome = ? ORDER BY id DESC", params=(atelier_fin_filtro,))
+    else:
+        if db_type == "postgres":
+            df_pedidos = carregar_dataframe("SELECT atelier_nome, lote_id, SUM(preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_pedido FROM pedidos WHERE atelier_nome = :at AND lote_id IS NOT NULL AND lote_id != '' GROUP BY atelier_nome, lote_id", params={"at": perfil})
+            df_todos_itens = carregar_dataframe("SELECT atelier_nome, lote_id, cor_bone, frase_arte, cor_linha, tipo, preco, COALESCE(valor_estampa_extra, 0) as valor_estampa_extra, COALESCE(valor_matriz, 0) as valor_matriz FROM pedidos WHERE atelier_nome = :at AND lote_id IS NOT NULL AND lote_id != ''", params={"at": perfil})
+            df_pagamentos = carregar_dataframe("SELECT * FROM pagamentos WHERE atelier_nome = :at ORDER BY id DESC", params={"at": perfil})
+        else:
+            df_pedidos = carregar_dataframe("SELECT atelier_nome, lote_id, SUM(preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_pedido FROM pedidos WHERE atelier_nome = ? AND lote_id IS NOT NULL AND lote_id != '' GROUP BY atelier_nome, lote_id", params=(perfil,))
+            df_todos_itens = carregar_dataframe("SELECT atelier_nome, lote_id, cor_bone, frase_arte, cor_linha, tipo, preco, COALESCE(valor_estampa_extra, 0) as valor_estampa_extra, COALESCE(valor_matriz, 0) as valor_matriz FROM pedidos WHERE atelier_nome = ? AND lote_id IS NOT NULL AND lote_id != ''", params=(perfil,))
+            df_pagamentos = carregar_dataframe("SELECT * FROM pagamentos WHERE atelier_nome = ? ORDER BY id DESC", params=(perfil,))
 
     if df_pedidos.empty:
         st.info("Nenhum pedido cadastrado para exibir no controle financeiro.")
     else:
-        lotes_list = list(df_pedidos["lote_id"].unique())
-
         if is_admin:
             with st.expander("➕ **Registrar Novo Pagamento (Exclusivo ADM)**", expanded=True):
                 with st.form("form_pagamento", clear_on_submit=True):
                     col_p1, col_p2, col_p3 = st.columns(3)
                     with col_p1:
-                        if "selected_lote_fin" not in st.session_state:
-                            st.session_state["selected_lote_fin"] = lotes_list[0]
-                        lote_pag = st.selectbox(
-                            "Selecione o Pedido:", 
-                            lotes_list,
-                            index=lotes_list.index(st.session_state["selected_lote_fin"]) if st.session_state["selected_lote_fin"] in lotes_list else 0
-                        )
-                        st.session_state["selected_lote_fin"] = lote_pag
-                        row_pedido = df_pedidos[df_pedidos["lote_id"] == lote_pag]
+                        atelier_pag_sel = st.selectbox("Ateliê do Pagamento:", ["Ateliê Saara 1", "Ateliê Copa", "Ateliê Saara 2", "R2 Bonés"], key="sel_at_pag")
+                        
+                        df_lotes_at = df_pedidos[df_pedidos["atelier_nome"] == atelier_pag_sel]
+                        lotes_list_at = list(df_lotes_at["lote_id"].unique()) if not df_lotes_at.empty else []
+                        
+                        lote_pag = st.selectbox("Selecione o Pedido:", lotes_list_at if lotes_list_at else ["Nenhum pedido"])
+                        
+                        row_pedido = df_lotes_at[df_lotes_at["lote_id"] == lote_pag] if lotes_list_at else pd.DataFrame()
                         val_total = row_pedido["total_pedido"].values[0] if not row_pedido.empty else 0.0
                         st.caption(f"Valor Total do Pedido: **R$ {val_total:.2f}**")
                     
@@ -851,7 +946,9 @@ elif menu == "💰 Financeiro":
 
                     if submit_pag:
                         val_pago_num = clean_currency(valor_pago_str)
-                        if val_pago_num <= 0:
+                        if not lotes_list_at or lote_pag == "Nenhum pedido":
+                            st.error("Selecione um pedido válido.")
+                        elif val_pago_num <= 0:
                             st.error("Insira um valor pago válido.")
                         else:
                             comp_path = ""
@@ -866,10 +963,10 @@ elif menu == "💰 Financeiro":
                             if db_type == "postgres":
                                 with engine.begin() as conn:
                                     conn.execute(text('''
-                                        INSERT INTO pagamentos (lote_id, data_pagamento, valor_pago, forma_pagamento, observacoes, comprovante_path)
-                                        VALUES (:lote_id, :data_pagamento, :valor_pago, :forma_pagamento, :observacoes, :comprovante_path)
+                                        INSERT INTO pagamentos (lote_id, atelier_nome, data_pagamento, valor_pago, forma_pagamento, observacoes, comprovante_path)
+                                        VALUES (:lote_id, :atelier_nome, :data_pagamento, :valor_pago, :forma_pagamento, :observacoes, :comprovante_path)
                                     '''), {
-                                        "lote_id": lote_pag, "data_pagamento": data_pag_str,
+                                        "lote_id": lote_pag, "atelier_nome": atelier_pag_sel, "data_pagamento": data_pag_str,
                                         "valor_pago": val_pago_num, "forma_pagamento": forma_pag,
                                         "observacoes": obs_pag, "comprovante_path": comp_path
                                     })
@@ -877,23 +974,24 @@ elif menu == "💰 Financeiro":
                                 conn = sqlite3.connect(DB_NAME)
                                 c = conn.cursor()
                                 c.execute('''
-                                    INSERT INTO pagamentos (lote_id, data_pagamento, valor_pago, forma_pagamento, observacoes, comprovante_path)
-                                    VALUES (?, ?, ?, ?, ?, ?)
-                                ''', (lote_pag, data_pag_str, val_pago_num, forma_pag, obs_pag, comp_path))
+                                    INSERT INTO pagamentos (lote_id, atelier_nome, data_pagamento, valor_pago, forma_pagamento, observacoes, comprovante_path)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                                ''', (lote_pag, atelier_pag_sel, data_pag_str, val_pago_num, forma_pag, obs_pag, comp_path))
                                 conn.commit()
                                 conn.close()
                             
-                            st.success(f"✅ Pagamento de R$ {val_pago_num:.2f} registrado para o pedido '{lote_pag}'!")
+                            st.success(f"✅ Pagamento de R$ {val_pago_num:.2f} registrado para o pedido '{lote_pag}' ({atelier_pag_sel})!")
                             st.rerun()
 
         st.markdown("---")
         st.subheader("📊 Resumo Financeiro por Pedido")
 
         for _, row in df_pedidos.iterrows():
+            atelier_item = row["atelier_nome"]
             lote = row["lote_id"]
             total_pedido = row["total_pedido"]
 
-            df_pag_lote = df_pagamentos[df_pagamentos["lote_id"] == lote] if not df_pagamentos.empty else pd.DataFrame()
+            df_pag_lote = df_pagamentos[(df_pagamentos["lote_id"] == lote) & (df_pagamentos["atelier_nome"] == atelier_item)] if not df_pagamentos.empty else pd.DataFrame()
             total_pago = df_pag_lote["valor_pago"].sum() if not df_pag_lote.empty else 0.0
             saldo_devedor = total_pedido - total_pago
 
@@ -905,7 +1003,9 @@ elif menu == "💰 Financeiro":
             else:
                 status_pag = "🔴 Pendente"
 
-            with st.expander(f"📦 Pedido: {lote} | Status: {status_pag}", expanded=False):
+            titulo_exp_fin = f"📦 Ateliê: {atelier_item} | Pedido: {lote} | Status: {status_pag}" if is_admin else f"📦 Pedido: {lote} | Status: {status_pag}"
+
+            with st.expander(titulo_exp_fin, expanded=False):
                 c_m1, c_m2, c_m3, c_m4 = st.columns(4)
                 c_m1.metric("Total do Pedido", f"R$ {total_pedido:.2f}")
                 c_m2.metric("Total Pago", f"R$ {total_pago:.2f}")
@@ -941,7 +1041,7 @@ elif menu == "💰 Financeiro":
                     st.caption("Nenhum pagamento registrado para este pedido ainda.")
 
                 st.markdown("##### 🧢 Detalhamento")
-                df_itens_lote = df_todos_itens[df_todos_itens["lote_id"] == lote]
+                df_itens_lote = df_todos_itens[(df_todos_itens["lote_id"] == lote) & (df_todos_itens["atelier_nome"] == atelier_item)]
                 
                 if not df_itens_lote.empty:
                     col_det1, col_det2 = st.columns(2)
@@ -970,11 +1070,11 @@ elif menu == "💰 Financeiro":
                             c_btn_est, c_btn_mat = st.columns(2)
                             with c_btn_est:
                                 if not df_estampas.empty:
-                                    if st.button("🔍 Estampa", key=f"btn_pop_est_{lote}", help="Ver itens de Estampa Extra", use_container_width=True):
+                                    if st.button("🔍 Estampa", key=f"btn_pop_est_{atelier_item}_{lote}", help="Ver itens de Estampa Extra", use_container_width=True):
                                         modal_detalhes_extra("Detalhamento de Estampa Extra", df_estampas, "valor_estampa_extra")
                             with c_btn_mat:
                                 if not df_matrizes.empty:
-                                    if st.button("🔍 Matriz Bordado", key=f"btn_pop_mat_{lote}", help="Ver itens de Matriz de Bordado", use_container_width=True):
+                                    if st.button("🔍 Matriz Bordado", key=f"btn_pop_mat_{atelier_item}_{lote}", help="Ver itens de Matriz de Bordado", use_container_width=True):
                                         modal_detalhes_extra("Detalhamento de Matriz de Bordado", df_matrizes, "valor_matriz")
 
                     st.markdown(f"💰 **Valor Total Adiantado:** `R$ {total_pago:.2f}`")
@@ -986,7 +1086,7 @@ elif menu == "💰 Financeiro":
 # -------------------------------------------------------------
 elif menu == "📈 Dashboard ADM" and is_admin:
     st.header("📈 Dashboard Analítico da Produção (Exclusivo ADM)")
-    st.write("Acompanhe o desempenho, volume de produção por cor, produto e status em tempo real.")
+    st.write("Acompanhe o desempenho, volume de produção por ateliê, cor, produto e status em tempo real.")
 
     df_dash = carregar_dataframe("SELECT *, (preco + COALESCE(valor_estampa_extra, 0) + COALESCE(valor_matriz, 0)) as total_item FROM pedidos ORDER BY id DESC")
 
@@ -996,6 +1096,10 @@ elif menu == "📈 Dashboard ADM" and is_admin:
         df_dash["data_dt"] = pd.to_datetime(df_dash["data_criacao"], format="%d/%m/%Y", errors="coerce")
         
         st.markdown("### 🎯 Seleção do Escopo do Dashboard")
+        col_dash_at = st.selectbox("Filtrar por Ateliê:", ["Todos os Ateliês", "Ateliê Saara 1", "Ateliê Copa", "Ateliê Saara 2", "R2 Bonés"], key="dash_atelier_sel")
+        if col_dash_at != "Todos os Ateliês":
+            df_dash = df_dash[df_dash["atelier_nome"] == col_dash_at]
+
         col_dash_f1, col_dash_f2 = st.columns(2)
         with col_dash_f1:
             modo_filtro = st.radio("Filtrar Visão por:", ["Por Pedido Específico", "Por Período / Data"], horizontal=True)
