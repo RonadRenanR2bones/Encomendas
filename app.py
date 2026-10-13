@@ -47,12 +47,11 @@ st.markdown('''
 DB_NAME = "ordens_producao.db"
 UPLOADS_DIR = "uploads"
 COMPROVANTES_DIR = "comprovantes"
+NOTAS_FISCAIS_DIR = "notas_fiscais"
 
-if not os.path.exists(UPLOADS_DIR):
-    os.makedirs(UPLOADS_DIR)
-
-if not os.path.exists(COMPROVANTES_DIR):
-    os.makedirs(COMPROVANTES_DIR)
+for d in [UPLOADS_DIR, COMPROVANTES_DIR, NOTAS_FISCAIS_DIR]:
+    if not os.path.exists(d):
+        os.makedirs(d)
 
 # Conexão híbrida: Supabase (PostgreSQL) via Secrets ou SQLite local
 @st.cache_resource
@@ -108,15 +107,26 @@ def init_db():
                     comprovante_path TEXT
                 );
             '''))
-            # Garantir coluna atelier_nome se tabela já existia sem ela
-            try:
-                conn.execute(text("ALTER TABLE pedidos ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'"))
-            except Exception:
-                pass
-            try:
-                conn.execute(text("ALTER TABLE pagamentos ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'"))
-            except Exception:
-                pass
+            conn.execute(text('''
+                CREATE TABLE IF NOT EXISTS notas_fiscais (
+                    id SERIAL PRIMARY KEY,
+                    lote_id TEXT,
+                    atelier_nome TEXT DEFAULT 'R2 Bonés',
+                    fornecedor TEXT,
+                    data_nf TEXT,
+                    numero_nf TEXT,
+                    pdf_path TEXT
+                );
+            '''))
+            for col_cmd in [
+                "ALTER TABLE pedidos ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'",
+                "ALTER TABLE pagamentos ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'",
+                "ALTER TABLE notas_fiscais ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'"
+            ]:
+                try:
+                    conn.execute(text(col_cmd))
+                except Exception:
+                    pass
     else:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -138,16 +148,6 @@ def init_db():
                 valor_matriz REAL DEFAULT 0.0
             )
         ''')
-        c.execute("PRAGMA table_info(pedidos)")
-        colunas_pedidos = [column[1] for column in c.fetchall()]
-        if "valor_estampa_extra" not in colunas_pedidos:
-            c.execute("ALTER TABLE pedidos ADD COLUMN valor_estampa_extra REAL DEFAULT 0.0")
-        if "valor_matriz" not in colunas_pedidos:
-            c.execute("ALTER TABLE pedidos ADD COLUMN valor_matriz REAL DEFAULT 0.0")
-        if "atelier_nome" not in colunas_pedidos:
-            c.execute("ALTER TABLE pedidos ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'")
-
-        c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
         c.execute('''
             CREATE TABLE IF NOT EXISTS pagamentos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,11 +160,35 @@ def init_db():
                 comprovante_path TEXT
             )
         ''')
-        c.execute("PRAGMA table_info(pagamentos)")
-        colunas_pag = [column[1] for column in c.fetchall()]
-        if "atelier_nome" not in colunas_pag:
-            c.execute("ALTER TABLE pagamentos ADD COLUMN atelier_nome TEXT DEFAULT 'R2 Bonés'")
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS notas_fiscais (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lote_id TEXT,
+                atelier_nome TEXT DEFAULT 'R2 Bonés',
+                fornecedor TEXT,
+                data_nf TEXT,
+                numero_nf TEXT,
+                pdf_path TEXT
+            )
+        ''')
+        
+        # Checar colunas caso tabelas já existissem
+        for tabela, col, definition in [
+            ("pedidos", "atelier_nome", "TEXT DEFAULT 'R2 Bonés'"),
+            ("pedidos", "valor_estampa_extra", "REAL DEFAULT 0.0"),
+            ("pedidos", "valor_matriz", "REAL DEFAULT 0.0"),
+            ("pagamentos", "atelier_nome", "TEXT DEFAULT 'R2 Bonés'"),
+            ("notas_fiscais", "atelier_nome", "TEXT DEFAULT 'R2 Bonés'")
+        ]:
+            c.execute(f"PRAGMA table_info({tabela})")
+            cols = [col_info[1] for col_info in c.fetchall()]
+            if col not in cols:
+                try:
+                    c.execute(f"ALTER TABLE {tabela} ADD COLUMN {col} {definition}")
+                except Exception:
+                    pass
 
+        c.execute("UPDATE pedidos SET tipo = 'Básico' WHERE tipo = 'Simples'")
         c.execute("UPDATE pedidos SET status = 'Em Produção' WHERE status = 'Pendente'")
         conn.commit()
         conn.close()
@@ -202,6 +226,24 @@ def deletar_pagamento(pagamento_id):
             except Exception:
                 pass
         c.execute("DELETE FROM pagamentos WHERE id = ?", (pagamento_id,))
+        conn.commit()
+        conn.close()
+
+def deletar_nota_fiscal(nf_id):
+    if db_type == "postgres":
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM notas_fiscais WHERE id = :id"), {"id": nf_id})
+    else:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT pdf_path FROM notas_fiscais WHERE id = ?", (nf_id,))
+        res = c.fetchone()
+        if res and res[0] and os.path.exists(res[0]):
+            try:
+                os.remove(res[0])
+            except Exception:
+                pass
+        c.execute("DELETE FROM notas_fiscais WHERE id = ?", (nf_id,))
         conn.commit()
         conn.close()
 
@@ -286,12 +328,10 @@ st.sidebar.header("👤 Perfil de Acesso")
 perfis_disponiveis = ["Ateliê Saara 1", "Ateliê Copa", "Ateliê Saara 2", "R2 Bonés"]
 perfil = st.sidebar.selectbox("Acessar como:", perfis_disponiveis)
 
-# Chave de controle de sessão por perfil para gerenciar o login
 session_key_auth = f"autenticado_{perfil}"
 if session_key_auth not in st.session_state:
     st.session_state[session_key_auth] = False
 
-# Se o perfil mudou ou não está autenticado, solicita a senha obrigatória
 if not st.session_state[session_key_auth]:
     senha_digitada = st.sidebar.text_input(f"Digite a Senha para [{perfil}]:", type="password", key=f"senha_input_{perfil}")
     if senha_digitada:
@@ -329,8 +369,32 @@ STATUS_OPCOES = ["Em Produção", "Concluído", "Entregue / Retirado"]
 # -------------------------------------------------------------
 if menu == "📥 Importar Excel" and is_admin:
     st.header("📥 Importar Pedidos de Ficheiros Excel (.xlsx)")
-    st.write("Selecione um ateliê de destino e carregue os ficheiros Excel correspondentes.")
+    st.write("Baixe o modelo oficial de importação ou carregue seus ficheiros preenchidos.")
 
+    # 1. Download do Modelo de Importação Excel
+    df_modelo_ex = pd.DataFrame({
+        'Data': ['13/10/2026', '13/10/2026'],
+        'Cor do Boné': ['Off White', 'Preto'],
+        'Arte Estampada': ['Cariocando', 'Vista o que você pensa'],
+        'Cor da Estampa': ['Azul', 'Branco'],
+        'Produto': ['Básico', 'Premium'],
+        'Preço Base': [29.00, 39.00],
+        'Estampa Extra': [0.00, 5.00],
+        'Matriz Bordado': [0.00, 15.00],
+        'Status': ['Em Produção', 'Em Produção'],
+        'Observações': ['', 'Bordado lateral']
+    })
+    
+    excel_modelo_bytes, mime_mod, ext_mod = gerar_excel_expandido(df_modelo_ex)
+    st.download_button(
+        label="📥 Baixar Modelo de Importação Excel (.xlsx)",
+        data=excel_modelo_bytes,
+        file_name=f"Modelo_Importacao_Pedidos.{ext_mod}",
+        mime=mime_mod,
+        help="Baixe esta planilha de exemplo para preencher com os novos pedidos."
+    )
+
+    st.markdown("---")
     atelier_destino_imp = st.selectbox("Ateliê Responsável pelos Pedidos:", ["Ateliê Saara 1", "Ateliê Copa", "Ateliê Saara 2", "R2 Bonés"])
 
     uploaded_files = st.file_uploader(
@@ -658,7 +722,6 @@ elif menu == "➕ Encomenda" and is_admin:
 elif menu == "📋 Produção":
     st.header("📋 Produção")
 
-    # FILTRAGEM DE ATELIÊ: Se ADM, pode escolher ver todos ou filtrar por Ateliê. Se for Ateliê, vê estritamente o seu.
     if is_admin:
         col_at_sel1, col_at_sel2 = st.columns(2)
         with col_at_sel1:
@@ -672,7 +735,6 @@ elif menu == "📋 Produção":
             else:
                 df = carregar_dataframe("SELECT * FROM pedidos WHERE atelier_nome = ? ORDER BY id DESC", params=(atelier_filtro_adm,))
     else:
-        # Ateliês só veem os seus próprios pedidos
         if db_type == "postgres":
             df = carregar_dataframe("SELECT * FROM pedidos WHERE atelier_nome = :at ORDER BY id DESC", params={"at": perfil})
         else:
@@ -704,7 +766,8 @@ elif menu == "📋 Produção":
                     modal_buscar_pedido("prod", lotes_disponiveis)
 
         with col_f2:
-            status_filter = st.multiselect("Filtrar por Status", options=STATUS_OPCOES, default=["Em Produção", "Concluído"])
+            # Regra: Carregamento automático apenas "Em Produção". Concluído e Entregue apenas quando selecionados manualmente.
+            status_filter = st.multiselect("Filtrar por Status", options=STATUS_OPCOES, default=["Em Produção"])
 
         if status_filter:
             df = df[df["status"].isin(status_filter)]
@@ -773,10 +836,10 @@ elif menu == "📋 Produção":
                             st.rerun()
 
 # -------------------------------------------------------------
-# 3. TABELA GERAL (EXPORTAÇÃO POR PEDIDO)
+# 3. TABELA GERAL (COM NOTA FISCAL E REPOSITÓRIO PDF)
 # -------------------------------------------------------------
 elif menu == "📊 Tabela Geral":
-    st.header("📊 Tabela Geral de Pedidos")
+    st.header("📊 Tabela Geral de Pedidos & Notas Fiscais")
 
     if is_admin:
         col_at_tg1, col_at_tg2 = st.columns(2)
@@ -785,16 +848,21 @@ elif menu == "📊 Tabela Geral":
         
         if atelier_tg_filtro == "Todos os Ateliês":
             df = carregar_dataframe("SELECT id, lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos ORDER BY id DESC")
+            df_nfs = carregar_dataframe("SELECT * FROM notas_fiscais ORDER BY id DESC")
         else:
             if db_type == "postgres":
                 df = carregar_dataframe("SELECT id, lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos WHERE atelier_nome = :at ORDER BY id DESC", params={"at": atelier_tg_filtro})
+                df_nfs = carregar_dataframe("SELECT * FROM notas_fiscais WHERE atelier_nome = :at ORDER BY id DESC", params={"at": atelier_tg_filtro})
             else:
                 df = carregar_dataframe("SELECT id, lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos WHERE atelier_nome = ? ORDER BY id DESC", params=(atelier_tg_filtro,))
+                df_nfs = carregar_dataframe("SELECT * FROM notas_fiscais WHERE atelier_nome = ? ORDER BY id DESC", params=(atelier_tg_filtro,))
     else:
         if db_type == "postgres":
             df = carregar_dataframe("SELECT id, lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos WHERE atelier_nome = :at ORDER BY id DESC", params={"at": perfil})
+            df_nfs = carregar_dataframe("SELECT * FROM notas_fiscais WHERE atelier_nome = :at ORDER BY id DESC", params={"at": perfil})
         else:
             df = carregar_dataframe("SELECT id, lote_id, atelier_nome, data_criacao, cor_bone, frase_arte, cor_linha, tipo, preco, valor_estampa_extra, valor_matriz, status, observacoes FROM pedidos WHERE atelier_nome = ? ORDER BY id DESC", params=(perfil,))
+            df_nfs = carregar_dataframe("SELECT * FROM notas_fiscais WHERE atelier_nome = ? ORDER BY id DESC", params=(perfil,))
 
     if df.empty:
         st.info("Nenhum pedido cadastrado.")
@@ -802,7 +870,6 @@ elif menu == "📊 Tabela Geral":
         df['lote_id'] = df['lote_id'].fillna('Sem Lote Definido')
         df['total_item'] = df['preco'] + df['valor_estampa_extra'].fillna(0) + df['valor_matriz'].fillna(0)
         
-        # Agrupar por atelier e lote para exibição limpa
         if is_admin and ("Todos" in locals().get('atelier_tg_filtro', 'Todos') or atelier_tg_filtro == "Todos os Ateliês"):
             grupos_lotes = df[['atelier_nome', 'lote_id']].drop_duplicates().values
         else:
@@ -867,6 +934,88 @@ elif menu == "📊 Tabela Geral":
                     st.dataframe(df_exibicao_lote, use_container_width=True, hide_index=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
+
+                # SEÇÃO DE NOTA FISCAL EMITIDA (NOME DO FORNECEDOR, DATA, NÚMERO E PDF)
+                st.markdown("#### 📄 Nota Fiscal Emitida")
+                
+                df_nfs_lote = df_nfs[(df_nfs["lote_id"] == lote) & (df_nfs["atelier_nome"] == atelier_item)] if not df_nfs.empty else pd.DataFrame()
+
+                if not df_nfs_lote.empty:
+                    for _, nf_row in df_nfs_lote.iterrows():
+                        c_nf_info, c_nf_dl, c_nf_del = st.columns([4, 1.5, 0.8])
+                        with c_nf_info:
+                            st.markdown(f"🏢 **Fornecedor:** `{nf_row['fornecedor']}` | 📅 **Data NF:** `{nf_row['data_nf']}` | 🔢 **Número:** `{nf_row['numero_nf']}`")
+                        with c_nf_dl:
+                            pdf_p = nf_row.get("pdf_path")
+                            if pdf_p and os.path.exists(str(pdf_p)):
+                                with open(pdf_p, "rb") as f_pdf:
+                                    st.download_button(
+                                        label="📥 Baixar PDF da NF",
+                                        data=f_pdf,
+                                        file_name=os.path.basename(pdf_p),
+                                        key=f"dl_nf_{nf_row['id']}"
+                                    )
+                            else:
+                                st.caption("PDF não anexado")
+                        with c_nf_del:
+                            if is_admin:
+                                if st.button("🗑 Excluir", key=f"btn_del_nf_{nf_row['id']}"):
+                                    deletar_nota_fiscal(nf_row['id'])
+                                    st.success("Nota Fiscal removida!")
+                                    st.rerun()
+                else:
+                    st.caption("Nenhuma Nota Fiscal cadastrada para este pedido.")
+
+                if is_admin:
+                    with st.expander("➕ Adicionar / Anexar Nova Nota Fiscal", expanded=False):
+                        with st.form(f"form_nf_{atelier_item}_{lote}", clear_on_submit=True):
+                            c_nf1, c_nf2, c_nf3 = st.columns(3)
+                            with c_nf1:
+                                forn_nome = st.text_input("Nome do Fornecedor", placeholder="Ex: Fornecedor de Tecidos Ltda")
+                                num_nf = st.text_input("Número da Nota Fiscal", placeholder="Ex: 00012345")
+                            with c_nf2:
+                                data_nf_val = st.date_input("Data da Nota Fiscal", value=datetime.now(), key=f"dt_nf_{atelier_item}_{lote}")
+                            with c_nf3:
+                                up_pdf = st.file_uploader("Anexar Nota Fiscal (PDF)", type=["pdf", "jpg", "png"], key=f"up_pdf_{atelier_item}_{lote}")
+                            
+                            btn_save_nf = st.form_submit_button("💾 Salvar Nota Fiscal", use_container_width=True)
+
+                            if btn_save_nf:
+                                if not forn_nome or not num_nf:
+                                    st.error("Preencha o nome do fornecedor e o número da nota fiscal.")
+                                else:
+                                    pdf_path_salvo = ""
+                                    if up_pdf is not None:
+                                        ext_f = up_pdf.name.split(".")[-1]
+                                        nome_f_pdf = f"nf_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.{ext_f}"
+                                        pdf_path_salvo = os.path.join(NOTAS_FISCAIS_DIR, nome_f_pdf)
+                                        with open(pdf_path_salvo, "wb") as f_out:
+                                            f_out.write(up_pdf.getbuffer())
+
+                                    data_nf_str = data_nf_val.strftime("%d/%m/%Y")
+                                    if db_type == "postgres":
+                                        with engine.begin() as conn_nf:
+                                            conn_nf.execute(text('''
+                                                INSERT INTO notas_fiscais (lote_id, atelier_nome, fornecedor, data_nf, numero_nf, pdf_path)
+                                                VALUES (:lote_id, :atelier_nome, :fornecedor, :data_nf, :numero_nf, :pdf_path)
+                                            '''), {
+                                                "lote_id": lote, "atelier_nome": atelier_item, "fornecedor": forn_nome,
+                                                "data_nf": data_nf_str, "numero_nf": num_nf, "pdf_path": pdf_path_salvo
+                                            })
+                                    else:
+                                        conn_nf = sqlite3.connect(DB_NAME)
+                                        c_n = conn_nf.cursor()
+                                        c_n.execute('''
+                                            INSERT INTO notas_fiscais (lote_id, atelier_nome, fornecedor, data_nf, numero_nf, pdf_path)
+                                            VALUES (?, ?, ?, ?, ?, ?)
+                                        ''', (lote, atelier_item, forn_nome, data_nf_str, num_nf, pdf_path_salvo))
+                                        conn_nf.commit()
+                                        conn_nf.close()
+
+                                    st.success("✅ Nota Fiscal cadastrada com sucesso!")
+                                    st.rerun()
+
+                st.markdown("<br>", unsafe_allow_html=True)
                 excel_lote_bytes, mime_lote, ext_lote = gerar_excel_expandido(df_exibicao_lote)
                 lote_filename = str(lote).replace('/', '-').replace(' ', '_')
                 atelier_filename = str(atelier_item).replace(' ', '_')
@@ -885,7 +1034,6 @@ elif menu == "💰 Financeiro":
     st.header("💰 Controle Financeiro de Pedidos")
     st.write("Acompanhamento de pagamentos por pedido (adiantamentos e quitações).")
 
-    # Filtrar dados financeiros conforme o perfil de acesso
     if is_admin:
         col_fin_at1, col_fin_at2 = st.columns(2)
         with col_fin_at1:
